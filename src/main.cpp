@@ -26,9 +26,18 @@
 
 #define ENABLE_VALIDATION false
 
-// Offscreen frame buffer properties
 #define FB_DIM 1024
 #define FB_COLOR_FORMAT VK_FORMAT_R8G8B8A8_UNORM
+
+#define TERRAIN_LAYER_COUNT 6
+
+#if defined(__ANDROID__)
+#define SHADOWMAP_DIM 2048
+#else
+#define SHADOWMAP_DIM 8192
+#endif
+
+#define SHADOW_MAP_CASCADE_COUNT 4
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -37,7 +46,9 @@ public:
 
 	vks::HeightMap* heightMap;
 
-	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
+	glm::vec4 lightPos;
+
+	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay, sceneDrawShadowCascade };
 
 	struct Quad {
 		uint32_t indexCount;
@@ -52,6 +63,9 @@ public:
 		vks::Texture2DArray terrainArray;
 	} textures;
 
+	std::vector<vks::Texture2D> skyspheres;
+	int32_t skysphereIndex;
+
 	struct Models {
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
@@ -64,20 +78,36 @@ public:
 		vks::Buffer vsDebugQuad;
 		vks::Buffer terrain;
 		vks::Buffer sky;
+		vks::Buffer CSM;
 	} uniformBuffers;
 
 	struct UBO {
 		glm::mat4 projection;
 		glm::mat4 model;
-		glm::vec4 lightPos = glm::vec4(0.0f, -10.0f, 10.0f, 1.0f);
-	} uboShared, uboTerrain, uboSky;
+		glm::vec4 lightDir = glm::vec4(10.0f, 10.0f, 10.0f, 1.0f);
+	} uboShared, uboSky;
 
-	struct UBOMirror {
+	struct UBOTerrain {
+		glm::mat4 projection;
+		glm::mat4 model;
+		glm::vec4 lightDir = glm::vec4(10.0f, 10.0f, 10.0f, 1.0f);
+		glm::vec4 layers[TERRAIN_LAYER_COUNT];
+	} uboTerrain;
+
+	struct UBOCSM {
+		float cascadeSplits[SHADOW_MAP_CASCADE_COUNT];
+		glm::mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
+		glm::mat4 inverseViewMat;
+		glm::vec3 lightDir;
+	} uboCSM;
+
+	struct UBOWaterPlane {
 		glm::mat4 projection;
 		glm::mat4 model;
 		glm::vec4 cameraPos;
+		glm::vec4 lightDir;
 		float time;
-	} uboMirror;
+	} uboWaterPlane;
 
 	struct {
 		VkPipelineLayout textured;
@@ -125,12 +155,60 @@ public:
 		VkSampler sampler;
 	} offscreenPass;
 
-	glm::vec3 meshPos = glm::vec3(0.0f, -1.5f, 0.0f);
-	glm::vec3 meshRot = glm::vec3(0.0f);
+	/* CSM */
+
+	float cascadeSplitLambda = 0.95f;
+
+	float zNear = 0.5f;
+	float zFar = 48.0f;
+
+	// Resources of the depth map generation pass
+	struct CascadePushConstBlock {
+		glm::vec4 position;
+		uint32_t cascadeIndex;
+	};
+	struct DepthPass {
+		VkRenderPass renderPass;
+		VkPipelineLayout pipelineLayout;
+		VkPipeline pipeline;
+		vks::Buffer uniformBuffer;
+		VkDescriptorSetLayout descriptorSetLayout;
+		VkDescriptorSet descriptorSet;
+		struct UniformBlock {
+			std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMat;
+		} ubo;
+	} depthPass;
+	// Layered depth image containing the shadow cascade depths
+	struct DepthImage {
+		VkImage image;
+		VkDeviceMemory mem;
+		VkImageView view;
+		VkSampler sampler;
+		void destroy(VkDevice device) {
+			vkDestroyImageView(device, view, nullptr);
+			vkDestroyImage(device, image, nullptr);
+			vkFreeMemory(device, mem, nullptr);
+			vkDestroySampler(device, sampler, nullptr);
+		}
+	} depth;
+
+	// Contains all resources required for a single shadow map cascade
+	struct Cascade {
+		VkFramebuffer frameBuffer;
+		VkDescriptorSet descriptorSet;
+		VkImageView view;
+		float splitDepth;
+		glm::mat4 viewProjMatrix;
+		void destroy(VkDevice device) {
+			vkDestroyImageView(device, view, nullptr);
+			vkDestroyFramebuffer(device, frameBuffer, nullptr);
+		}
+	};
+	std::array<Cascade, SHADOW_MAP_CASCADE_COUNT> cascades;
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
-		title = "Offscreen rendering";
+		title = "Vulkan Playground";
 		camera.type = Camera::CameraType::firstperson;
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 512.0f);
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
@@ -144,6 +222,21 @@ public:
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;
 		enabledFeatures.samplerAnisotropy = VK_TRUE;
+		enabledFeatures.depthClamp = VK_TRUE;	
+
+		// @todo
+		float radius = 20.0f;
+		lightPos = glm::vec4(20.0f, -15.0f, -15.0f, 0.0f) * radius;
+		lightPos = glm::vec4(-20.0f, -15.0f, -15.0f, 0.0f) * radius;
+		uboTerrain.lightDir = glm::normalize(lightPos);
+
+		// Terrain layers (x = start, y = range)
+		uboTerrain.layers[0] = glm::vec4(12.5f, 45.0f, glm::vec2(0.0));
+		uboTerrain.layers[1] = glm::vec4(50.0f, 30.0f, glm::vec2(0.0));
+		uboTerrain.layers[2] = glm::vec4(62.5f, 35.0f, glm::vec2(0.0));
+		uboTerrain.layers[3] = glm::vec4(87.5f, 25.0f, glm::vec2(0.0));
+		uboTerrain.layers[4] = glm::vec4(117.5f, 45.0f, glm::vec2(0.0));
+		uboTerrain.layers[5] = glm::vec4(165.0f, 50.0f, glm::vec2(0.0));
 	}
 
 	~VulkanExample()
@@ -369,12 +462,13 @@ public:
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &offscreenPass.reflection.frameBuffer));
 	}
 
-	void drawScene(VkCommandBuffer cmdBuffer, SceneDrawType drawType)
+	void drawScene(VkCommandBuffer cmdBuffer, SceneDrawType drawType, uint32_t cascadeIndex = 0)
 	{
 		// @todo: rename to localMat
 		struct PushConst {
 			glm::mat4 scale = glm::mat4(1.0f);
 			glm::vec4 clipPlane = glm::vec4(0.0f);
+			uint32_t shadows = 1;
 		} pushConst;
 		if (drawType == SceneDrawType::sceneDrawTypeReflect) {
 			pushConst.scale = glm::scale(pushConst.scale, glm::vec3(1.0f, -1.0f, 1.0f));
@@ -383,16 +477,18 @@ public:
 		switch (drawType) {
 		case SceneDrawType::sceneDrawTypeRefract:
 			pushConst.clipPlane = glm::vec4(0.0, 1.0, 0.0, 0.0);
+			pushConst.shadows = 0;
 			break;
 		case SceneDrawType::sceneDrawTypeReflect:
 			pushConst.clipPlane = glm::vec4(0.0, 1.0, 0.0, 0.0);
+			pushConst.shadows = 0;
 			break;
 		}
 
 		const VkDeviceSize offsets[1] = { 0 };
 		
 		// Skysphere
-		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
+		if ((drawType != SceneDrawType::sceneDrawTypeRefract) && (drawType != SceneDrawType::sceneDrawShadowCascade)) {
 			vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.sky);
 			vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky, 0, 1, &descriptorSets.skysphere, 0, nullptr);
 			models.skysphere.draw(cmdBuffer);
@@ -407,6 +503,281 @@ public:
 		vkCmdDrawIndexed(cmdBuffer, heightMap->indexCount, 1, 0, 0, 0);
 	}
 
+	void drawShadowCasters(VkCommandBuffer cmdBuffer, uint32_t cascadeIndex = 0) {
+		const VkDeviceSize offsets[1] = { 0 };
+		const CascadePushConstBlock pushConstBlock = { glm::vec4(0.0f), cascadeIndex };
+		vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipeline);
+		vkCmdPushConstants(cmdBuffer, depthPass.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(CascadePushConstBlock), &pushConstBlock);
+		vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout, 0, 1, &depthPass.descriptorSet, 0, nullptr);
+		vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
+		vkCmdBindIndexBuffer(cmdBuffer, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+		vkCmdDrawIndexed(cmdBuffer, heightMap->indexCount, 1, 0, 0, 0);
+	}
+
+	/*
+		CSM
+	*/
+
+	void prepareCSM()
+	{
+		VkFormat depthFormat;
+		vks::tools::getSupportedDepthFormat(physicalDevice, &depthFormat);
+
+		/*
+			Depth map renderpass
+		*/
+
+		VkAttachmentDescription attachmentDescription{};
+		attachmentDescription.format = depthFormat;
+		attachmentDescription.samples = VK_SAMPLE_COUNT_1_BIT;
+		attachmentDescription.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachmentDescription.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		attachmentDescription.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachmentDescription.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		attachmentDescription.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		attachmentDescription.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+		VkAttachmentReference depthReference = {};
+		depthReference.attachment = 0;
+		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpass = {};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 0;
+		subpass.pDepthStencilAttachment = &depthReference;
+
+		// Use subpass dependencies for layout transitions
+		std::array<VkSubpassDependency, 2> dependencies;
+
+		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[0].dstSubpass = 0;
+		dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+		dependencies[1].srcSubpass = 0;
+		dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+		VkRenderPassCreateInfo renderPassCreateInfo = vks::initializers::renderPassCreateInfo();
+		renderPassCreateInfo.attachmentCount = 1;
+		renderPassCreateInfo.pAttachments = &attachmentDescription;
+		renderPassCreateInfo.subpassCount = 1;
+		renderPassCreateInfo.pSubpasses = &subpass;
+		renderPassCreateInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
+		renderPassCreateInfo.pDependencies = dependencies.data();
+
+		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassCreateInfo, nullptr, &depthPass.renderPass));
+
+		/*
+			Layered depth image and views
+		*/
+
+		VkImageCreateInfo imageInfo = vks::initializers::imageCreateInfo();
+		imageInfo.imageType = VK_IMAGE_TYPE_2D;
+		imageInfo.extent.width = SHADOWMAP_DIM;
+		imageInfo.extent.height = SHADOWMAP_DIM;
+		imageInfo.extent.depth = 1;
+		imageInfo.mipLevels = 1;
+		imageInfo.arrayLayers = SHADOW_MAP_CASCADE_COUNT;
+		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		imageInfo.format = depthFormat;
+		imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		VK_CHECK_RESULT(vkCreateImage(device, &imageInfo, nullptr, &depth.image));
+		VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
+		VkMemoryRequirements memReqs;
+		vkGetImageMemoryRequirements(device, depth.image, &memReqs);
+		memAlloc.allocationSize = memReqs.size;
+		memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &depth.mem));
+		VK_CHECK_RESULT(vkBindImageMemory(device, depth.image, depth.mem, 0));
+		// Full depth map view (all layers)
+		VkImageViewCreateInfo viewInfo = vks::initializers::imageViewCreateInfo();
+		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+		viewInfo.format = depthFormat;
+		viewInfo.subresourceRange = {};
+		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		viewInfo.subresourceRange.baseMipLevel = 0;
+		viewInfo.subresourceRange.levelCount = 1;
+		viewInfo.subresourceRange.baseArrayLayer = 0;
+		viewInfo.subresourceRange.layerCount = SHADOW_MAP_CASCADE_COUNT;
+		viewInfo.image = depth.image;
+		VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, &depth.view));
+
+		// One image and framebuffer per cascade
+		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+			// Image view for this cascade's layer (inside the depth map)
+			// This view is used to render to that specific depth image layer
+			VkImageViewCreateInfo viewInfo = vks::initializers::imageViewCreateInfo();
+			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+			viewInfo.format = depthFormat;
+			viewInfo.subresourceRange = {};
+			viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			viewInfo.subresourceRange.baseMipLevel = 0;
+			viewInfo.subresourceRange.levelCount = 1;
+			viewInfo.subresourceRange.baseArrayLayer = i;
+			viewInfo.subresourceRange.layerCount = 1;
+			viewInfo.image = depth.image;
+			VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, &cascades[i].view));
+			// Framebuffer
+			VkFramebufferCreateInfo framebufferInfo = vks::initializers::framebufferCreateInfo();
+			framebufferInfo.renderPass = depthPass.renderPass;
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = &cascades[i].view;
+			framebufferInfo.width = SHADOWMAP_DIM;
+			framebufferInfo.height = SHADOWMAP_DIM;
+			framebufferInfo.layers = 1;
+			VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cascades[i].frameBuffer));
+		}
+
+		// Shared sampler for cascade deoth reads
+		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
+		sampler.magFilter = VK_FILTER_LINEAR;
+		sampler.minFilter = VK_FILTER_LINEAR;
+		sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		sampler.addressModeV = sampler.addressModeU;
+		sampler.addressModeW = sampler.addressModeU;
+		sampler.mipLodBias = 0.0f;
+		sampler.maxAnisotropy = 1.0f;
+		sampler.minLod = 0.0f;
+		sampler.maxLod = 1.0f;
+		sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &depth.sampler));
+	}
+
+	/*
+		Calculate frustum split depths and matrices for the shadow map cascades
+		Based on https://johanmedestrom.wordpress.com/2016/03/18/opengl-cascaded-shadow-maps/
+	*/
+	void updateCascades()
+	{
+		float cascadeSplits[SHADOW_MAP_CASCADE_COUNT];
+
+		float nearClip = camera.getNearClip();
+		float farClip = camera.getFarClip();
+		float clipRange = farClip - nearClip;
+
+		float minZ = nearClip;
+		float maxZ = nearClip + clipRange;
+
+		float range = maxZ - minZ;
+		float ratio = maxZ / minZ;
+
+		// Calculate split depths based on view camera furstum
+		// Based on method presentd in https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
+		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+			float p = (i + 1) / static_cast<float>(SHADOW_MAP_CASCADE_COUNT);
+			float log = minZ * std::pow(ratio, p);
+			float uniform = minZ + range * p;
+			float d = cascadeSplitLambda * (log - uniform) + uniform;
+			cascadeSplits[i] = (d - nearClip) / clipRange;
+		}
+
+		// Calculate orthographic projection matrix for each cascade
+		float lastSplitDist = 0.0;
+		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+			float splitDist = cascadeSplits[i];
+
+			glm::vec3 frustumCorners[8] = {
+				glm::vec3(-1.0f,  1.0f, -1.0f),
+				glm::vec3(1.0f,  1.0f, -1.0f),
+				glm::vec3(1.0f, -1.0f, -1.0f),
+				glm::vec3(-1.0f, -1.0f, -1.0f),
+				glm::vec3(-1.0f,  1.0f,  1.0f),
+				glm::vec3(1.0f,  1.0f,  1.0f),
+				glm::vec3(1.0f, -1.0f,  1.0f),
+				glm::vec3(-1.0f, -1.0f,  1.0f),
+			};
+
+			// Project frustum corners into world space
+			glm::mat4 invCam = glm::inverse(camera.matrices.perspective * camera.matrices.view);
+			for (uint32_t i = 0; i < 8; i++) {
+				glm::vec4 invCorner = invCam * glm::vec4(frustumCorners[i], 1.0f);
+				frustumCorners[i] = invCorner / invCorner.w;
+			}
+
+			for (uint32_t i = 0; i < 4; i++) {
+				glm::vec3 dist = frustumCorners[i + 4] - frustumCorners[i];
+				frustumCorners[i + 4] = frustumCorners[i] + (dist * splitDist);
+				frustumCorners[i] = frustumCorners[i] + (dist * lastSplitDist);
+			}
+
+			// Get frustum center
+			glm::vec3 frustumCenter = glm::vec3(0.0f);
+			for (uint32_t i = 0; i < 8; i++) {
+				frustumCenter += frustumCorners[i];
+			}
+			frustumCenter /= 8.0f;
+
+			float radius = 0.0f;
+			for (uint32_t i = 0; i < 8; i++) {
+				float distance = glm::length(frustumCorners[i] - frustumCenter);
+				radius = glm::max(radius, distance);
+			}
+			radius = std::ceil(radius * 16.0f) / 16.0f;
+
+			glm::vec3 maxExtents = glm::vec3(radius);
+			glm::vec3 minExtents = -maxExtents;
+
+			glm::vec3 lightDir = glm::normalize(-lightPos);
+			glm::mat4 lightViewMatrix = glm::lookAt(frustumCenter - lightDir * -minExtents.z, frustumCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+			glm::mat4 lightOrthoMatrix = glm::ortho(minExtents.x, maxExtents.x, minExtents.y, maxExtents.y, 0.0f, maxExtents.z - minExtents.z);
+
+			// Store split distance and matrix in cascade
+			cascades[i].splitDepth = (camera.getNearClip() + splitDist * clipRange) * -1.0f;
+			cascades[i].viewProjMatrix = lightOrthoMatrix * lightViewMatrix;
+
+			lastSplitDist = cascadeSplits[i];
+		}
+	}
+
+	void drawCSM(VkCommandBuffer cmdBuffer) {
+		/*
+			Generate depth map cascades
+
+			Uses multiple passes with each pass rendering the scene to the cascade's depth image layer
+			Could be optimized using a geometry shader (and layered frame buffer) on devices that support geometry shaders
+		*/
+		VkClearValue clearValues[1];
+		clearValues[0].depthStencil = { 1.0f, 0 };
+
+		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+		renderPassBeginInfo.renderPass = depthPass.renderPass;
+		renderPassBeginInfo.renderArea.offset.x = 0;
+		renderPassBeginInfo.renderArea.offset.y = 0;
+		renderPassBeginInfo.renderArea.extent.width = SHADOWMAP_DIM;
+		renderPassBeginInfo.renderArea.extent.height = SHADOWMAP_DIM;
+		renderPassBeginInfo.clearValueCount = 1;
+		renderPassBeginInfo.pClearValues = clearValues;
+
+		VkViewport viewport = vks::initializers::viewport((float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
+		vkCmdSetViewport(cmdBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor = vks::initializers::rect2D(SHADOWMAP_DIM, SHADOWMAP_DIM, 0, 0);
+		vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
+
+		// One pass per cascade
+		// The layer that this pass renders to is defined by the cascade's image view (selected via the cascade's decsriptor set)
+		for (uint32_t j = 0; j < SHADOW_MAP_CASCADE_COUNT; j++) {
+			renderPassBeginInfo.framebuffer = cascades[j].frameBuffer;
+			vkCmdBeginRenderPass(cmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+			drawShadowCasters(cmdBuffer, j);
+			vkCmdEndRenderPass(cmdBuffer);
+		}
+	}
+
+	/*
+		Sample
+	*/
+
 	void buildCommandBuffers()
 	{
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
@@ -416,12 +787,16 @@ public:
 		VkRect2D scissor;
 		VkDeviceSize offsets[1] = { 0 };
 
-		for (int32_t i = 0; i < drawCmdBuffers.size(); ++i)
-		{
+		for (int32_t i = 0; i < drawCmdBuffers.size(); i++) {
 			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufInfo));
 
 			/*
-				First pass: Render refraction
+				CSM
+			*/
+			drawCSM(drawCmdBuffers[i]);
+
+			/*
+				Render refraction
 			*/	
 			{
 				VkClearValue clearValues[2];
@@ -483,7 +858,7 @@ public:
 			}
 
 			/*
-				Final pass: Scene rendering using refraction and reflection textures
+				Scene rendering with reflection, refraction and shadows
 			*/
 			{
 				clearValues[0].color = defaultClearColor;
@@ -539,27 +914,8 @@ public:
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
 				
-		// Textures
-		std::string texFormatSuffix;
-		VkFormat texFormat;
-		// Get supported compressed texture format
-		if (vulkanDevice->features.textureCompressionBC) {
-			texFormatSuffix = "_bc3_unorm";
-			texFormat = VK_FORMAT_BC3_UNORM_BLOCK;
-		}
-		else if (vulkanDevice->features.textureCompressionASTC_LDR) {
-			texFormatSuffix = "_astc_8x8_unorm";
-			texFormat = VK_FORMAT_ASTC_8x8_UNORM_BLOCK;
-		}
-		else if (vulkanDevice->features.textureCompressionETC2) {
-			texFormatSuffix = "_etc2_unorm";
-			texFormat = VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK;
-		}
-		else {
-			vks::tools::exitFatal("Device does not support any compressed texture format!", VK_ERROR_FEATURE_NOT_PRESENT);
-		}
-		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere" + texFormatSuffix + ".ktx", texFormat, vulkanDevice, queue);
-		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_texturearray" + texFormatSuffix + ".ktx", texFormat, vulkanDevice, queue);
+		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.heightMap.loadFromFile(getAssetPath() + "heightmap.ktx", VK_FORMAT_R16_UNORM, vulkanDevice, queue);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 
@@ -605,7 +961,7 @@ public:
 	// Generate a terrain quad patch for feeding to the tessellation control shader
 	void generateTerrain()
 	{
-		const glm::vec3 scale = glm::vec3(0.15f * 0.25f, 4.0f, 0.15f * 0.25f);
+		const glm::vec3 scale = glm::vec3(0.15f * 0.25f, 1.0f, 0.15f * 0.25f);
 		const uint32_t patchSize = 256;
 		heightMap = new vks::HeightMap(vulkanDevice, queue);
 #if defined(__ANDROID__)
@@ -633,8 +989,8 @@ public:
 	{
 		// @todo
 		std::vector<VkDescriptorPoolSize> poolSizes = {
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6 * 10),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8 * 10)
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6 * 25),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8 * 25)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo( poolSizes.size(), poolSizes.data(), 5 * 10);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
@@ -650,7 +1006,9 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,0),
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 2),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 5),
 		};
 
 		// Shaded layouts (only use first layout binding)
@@ -667,13 +1025,15 @@ public:
 		pipelineLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.textured, 1);
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.textured));
 
-		VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4) + sizeof(glm::vec4), 0);
+		VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4) + sizeof(glm::vec4) +sizeof(uint32_t), 0);
 
 		// Terrain
 		setLayoutBindings = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0),
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 2),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
 		};
 
 		descriptorLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings.data(), static_cast<uint32_t>(setLayoutBindings.size()));
@@ -694,11 +1054,27 @@ public:
 		pipelineLayoutInfo.pushConstantRangeCount = 1;
 		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.sky));
+
+		/* 
+			CSM 
+		*/
+		setLayoutBindings = {
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
+		};
+		descriptorLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings.data(), static_cast<uint32_t>(setLayoutBindings.size()));		
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayoutInfo, nullptr, &depthPass.descriptorSetLayout));
+		pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(CascadePushConstBlock), 0);
+		pipelineLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&depthPass.descriptorSetLayout, 1);
+		pipelineLayoutInfo.pushConstantRangeCount = 1;
+		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &depthPass.pipelineLayout));
 	}
 
 	void setupDescriptorSet()
 	{
-		// Mirror plane descriptor set
+		VkDescriptorImageInfo depthMapDescriptor = vks::initializers::descriptorImageInfo(depth.sampler, depth.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+
+		// Water plane
 		VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.textured,1);
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.mirror));
 
@@ -707,6 +1083,8 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &offscreenPass.refraction.descriptor),
 			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &offscreenPass.reflection.descriptor),
 			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &textures.waterNormalMap.descriptor),
+			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &depthMapDescriptor),
+			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5, &uniformBuffers.CSM.descriptor),
 		};
 		vkUpdateDescriptorSets(device, writeDescriptorSets.size(), writeDescriptorSets.data(), 0, NULL);
 
@@ -749,6 +1127,8 @@ public:
 			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.terrain.descriptor),
 			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &textures.heightMap.descriptor),
 			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.terrainArray.descriptor),
+			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &depthMapDescriptor),
+			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4, &uniformBuffers.CSM.descriptor),
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
 
@@ -761,6 +1141,28 @@ public:
 		};
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
 
+		/*
+			CSM
+		*/
+		// Per-cascade descriptor sets
+		// Each descriptor set represents a single layer of the array texture
+		// @todo: allocInfo
+		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &cascades[i].descriptorSet));
+			VkDescriptorImageInfo cascadeImageInfo = vks::initializers::descriptorImageInfo(depth.sampler, depth.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+			writeDescriptorSets = {
+				vks::initializers::writeDescriptorSet(cascades[i].descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &depthPass.uniformBuffer.descriptor),
+				vks::initializers::writeDescriptorSet(cascades[i].descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &cascadeImageInfo)
+			};
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
+		}
+
+		allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &depthPass.descriptorSetLayout, 1);
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &depthPass.descriptorSet));
+		writeDescriptorSets = {
+			vks::initializers::writeDescriptorSet(depthPass.descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &depthPass.uniformBuffer.descriptor),
+		};
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);		
 	}
 
 	void preparePipelines()
@@ -844,41 +1246,33 @@ public:
 		shaderStages[1] = loadShader(getAssetPath() + "shaders/skysphere.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.sky));
 		depthStencilState.depthWriteEnable = VK_TRUE;
+
+		/*
+			CSM
+		*/
+		shaderStages[0] = loadShader(getAssetPath() + "shaders/depthpass.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getAssetPath() + "shaders/terrain_depthpass.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		// No blend attachment states (no color attachments used)
+		colorBlendState.attachmentCount = 0;
+		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+		// Enable depth clamp (if available)
+		rasterizationState.depthClampEnable = deviceFeatures.depthClamp;
+		pipelineCI.layout = depthPass.pipelineLayout;
+		pipelineCI.renderPass = depthPass.renderPass;
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &depthPass.pipeline));
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
 	void prepareUniformBuffers()
-	{
-		// Mesh vertex shader uniform buffer block
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&uniformBuffers.vsShared,
-			sizeof(uboShared)));
-
-		// Mirror plane vertex shader uniform buffer block
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&uniformBuffers.vsMirror,
-			sizeof(uboMirror)));
-
-		// Offscreen vertex shader uniform buffer block 
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&uniformBuffers.vsOffScreen,
-			sizeof(uboShared)));
-
-		// Debug quad vertex shader uniform buffer block 
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&uniformBuffers.vsDebugQuad,
-			sizeof(uboShared)));
-
+	{		
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsShared, sizeof(uboShared)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsMirror, sizeof(uboWaterPlane)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsOffScreen, sizeof(uboShared)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsDebugQuad, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.sky, sizeof(uboShared)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &depthPass.uniformBuffer, sizeof(depthPass.ubo)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.CSM, sizeof(uboCSM)));
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.vsShared.map());
@@ -887,6 +1281,8 @@ public:
 		VK_CHECK_RESULT(uniformBuffers.vsDebugQuad.map());
 		VK_CHECK_RESULT(uniformBuffers.terrain.map());
 		VK_CHECK_RESULT(uniformBuffers.sky.map());
+		VK_CHECK_RESULT(depthPass.uniformBuffer.map());
+		VK_CHECK_RESULT(uniformBuffers.CSM.map());
 
 		updateUniformBuffers();
 		updateUniformBufferOffscreen();
@@ -894,30 +1290,37 @@ public:
 
 	void updateUniformBuffers()
 	{
+		float radius = 50.0f;
+		lightPos = glm::vec4(20.0f, -15.0f, -15.0f, 0.0f) * radius;
+		lightPos = glm::vec4(-20.0f, -15.0f, -15.0f, 0.0f) * radius;
+		lightPos = glm::vec4(-20.0f, -15.0f, 20.0f, 0.0f) * radius;
+
+		//float angle = glm::radians(timer * 360.0f);
+		//lightPos = glm::vec4(cos(angle) * radius, -15.0f, sin(angle) * radius, 0.0f);
+
+		uboTerrain.lightDir = glm::normalize(lightPos);
+		uboWaterPlane.lightDir = glm::normalize(lightPos);
+
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
 
 		// Mesh
-		uboShared.model = glm::translate(uboShared.model, meshPos);
-		uboShared.model = glm::rotate(uboShared.model, glm::radians(meshRot.y), glm::vec3(0.0f, 1.0f, 0.0f));
 		memcpy(uniformBuffers.vsShared.mapped, &uboShared, sizeof(uboShared));
 
 		// Mirror
-		uboMirror.projection = camera.matrices.perspective;
-		uboMirror.model = camera.matrices.view * glm::mat4(1.0f);
-		uboMirror.cameraPos = glm::vec4(camera.position, 0.0f);
-		uboMirror.time = sin(glm::radians(timer * 360.0f));
-		memcpy(uniformBuffers.vsMirror.mapped, &uboMirror, sizeof(uboMirror));
+		uboWaterPlane.projection = camera.matrices.perspective;
+		uboWaterPlane.model = camera.matrices.view * glm::mat4(1.0f);
+		uboWaterPlane.cameraPos = glm::vec4(camera.position, 0.0f);
+		uboWaterPlane.time = sin(glm::radians(timer * 360.0f));
+		memcpy(uniformBuffers.vsMirror.mapped, &uboWaterPlane, sizeof(uboWaterPlane));
 
 		// Debug quad
 		uboShared.projection = glm::ortho(4.0f, 0.0f, 0.0f, 4.0f*(float)height / (float)width, -1.0f, 1.0f);
 		uboShared.model = glm::mat4(1.0f);
 		memcpy(uniformBuffers.vsDebugQuad.mapped, &uboShared, sizeof(uboShared));
 
-		// Terrain
-		uboTerrain.projection = camera.matrices.perspective;
-		uboTerrain.model = camera.matrices.view;
-		uniformBuffers.terrain.copyTo(&uboTerrain, sizeof(uboTerrain));
+		updateUniformBufferTerrain();
+		updateUniformBufferCSM();
 
 		// Sky
 		uboSky.projection = camera.matrices.perspective;
@@ -925,13 +1328,32 @@ public:
 		uniformBuffers.sky.copyTo(&uboSky, sizeof(uboSky));
 	}
 
+	void updateUniformBufferTerrain() {
+		uboTerrain.projection = camera.matrices.perspective;
+		uboTerrain.model = camera.matrices.view;
+		uniformBuffers.terrain.copyTo(&uboTerrain, sizeof(uboTerrain));
+	}
+
+	void updateUniformBufferCSM() {
+		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+			depthPass.ubo.cascadeViewProjMat[i] = cascades[i].viewProjMatrix;
+		}
+		memcpy(depthPass.uniformBuffer.mapped, &depthPass.ubo, sizeof(depthPass.ubo));
+
+		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+			uboCSM.cascadeSplits[i] = cascades[i].splitDepth;
+			uboCSM.cascadeViewProjMat[i] = cascades[i].viewProjMatrix;
+		}
+		uboCSM.inverseViewMat = glm::inverse(camera.matrices.view);
+		uboCSM.lightDir = normalize(-lightPos);
+		memcpy(uniformBuffers.CSM.mapped, &uboCSM, sizeof(uboCSM));
+	}
+
 	void updateUniformBufferOffscreen()
 	{
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
-		uboShared.model = glm::rotate(uboShared.model, glm::radians(meshRot.y), glm::vec3(0.0f, 1.0f, 0.0f));
 		uboShared.model = glm::scale(uboShared.model, glm::vec3(1.0f, -1.0f, 1.0f));
-		uboShared.model = glm::translate(uboShared.model, meshPos);
 		memcpy(uniformBuffers.vsOffScreen.mapped, &uboShared, sizeof(uboShared));
 	}
 
@@ -956,6 +1378,7 @@ public:
 		generateQuad();
 		generateTerrain();
 		prepareOffscreen();
+		prepareCSM();
 		prepareUniformBuffers();
 		setupDescriptorSetLayout();
 		preparePipelines();
@@ -972,7 +1395,7 @@ public:
 		draw();
 		if (!paused)
 		{
-			meshRot.y += frameTimer * 10.0f;
+			updateCascades();
 			updateUniformBuffers();
 			updateUniformBufferOffscreen();
 		}
@@ -986,11 +1409,22 @@ public:
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
+		bool updateTerrain = false;
 		if (overlay->header("Settings")) {
 			if (overlay->checkBox("Display render target", &debugDisplay)) {
 				buildCommandBuffers();
 			}
 		}
+		if (overlay->header("Terrain layers")) {
+			for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
+				if (overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 200.0f)) {
+					updateTerrain = true;
+				}
+			}
+		}
+			//if (overlay->sliderInt("Skysphere", &skysphereIndex, 0, skyspheres.size() - 1)) {
+		//	buildCommandBuffers();
+		//}
 	}
 };
 

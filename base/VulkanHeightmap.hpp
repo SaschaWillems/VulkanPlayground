@@ -29,7 +29,7 @@ namespace vks
 	public:
 		enum Topology { topologyTriangles, topologyQuads };
 
-		float heightScale = 1.0f;
+		float heightScale = 4.0f;
 		float uvScale = 1.0f;
 
 		vks::Buffer vertexBuffer;
@@ -108,36 +108,25 @@ namespace vks
 			const float wx = 2.0f;
 			const float wy = 2.0f;
 
-			for (uint32_t x = 0; x < patchsize; x++)
-			{
-				for (uint32_t y = 0; y < patchsize; y++)
-				{
+			for (uint32_t x = 0; x < patchsize; x++) {
+				for (uint32_t y = 0; y < patchsize; y++) {
 					uint32_t index = (x + y * patchsize);
 					vertices[index].pos[0] = (x * wx + wx / 2.0f - (float)patchsize * wx / 2.0f) * scale.x;
 					vertices[index].pos[1] = -getHeight(x, y) * scale.y + 1.0f;
 					vertices[index].pos[2] = (y * wy + wy / 2.0f - (float)patchsize * wy / 2.0f) * scale.z;
 					vertices[index].uv = glm::vec2((float)x / patchsize, (float)y / patchsize) * uvScale;
-				}
-			}
-
-			for (uint32_t y = 0; y < patchsize; y++)
-			{
-				for (uint32_t x = 0; x < patchsize; x++)
-				{
+					// Normal
 					float dx = getHeight(x < patchsize - 1 ? x + 1 : x, y) - getHeight(x > 0 ? x - 1 : x, y);
 					if (x == 0 || x == patchsize - 1)
 						dx *= 2.0f;
-
 					float dy = getHeight(x, y < patchsize - 1 ? y + 1 : y) - getHeight(x, y > 0 ? y - 1 : y);
 					if (y == 0 || y == patchsize - 1)
 						dy *= 2.0f;
-
 					glm::vec3 A = glm::vec3(1.0f, 0.0f, dx);
 					glm::vec3 B = glm::vec3(0.0f, 1.0f, dy);
-
 					glm::vec3 normal = (glm::normalize(glm::cross(A, B)) + 1.0f) * 0.5f;
-
-					vertices[x + y * patchsize].normal = glm::vec3(normal.x, normal.z, normal.y);
+					normal = (glm::normalize(glm::cross(A, B)));
+					vertices[x + y * patchsize].normal = glm::vec3(normal.x, normal.y, normal.z);
 				}
 			}
 
@@ -152,15 +141,12 @@ namespace vks
 			case topologyTriangles:
 			{
 				indices = new uint32_t[w * w * 6];
-				for (uint32_t x = 0; x < w; x++)
-				{
-					for (uint32_t y = 0; y < w; y++)
-					{
+				for (uint32_t x = 0; x < w; x++) {
+					for (uint32_t y = 0; y < w; y++) {
 						uint32_t index = (x + y * w) * 6;
 						indices[index] = (x + y * patchsize);
 						indices[index + 1] = indices[index] + patchsize;
 						indices[index + 2] = indices[index + 1] + 1;
-
 						indices[index + 3] = indices[index + 1] + 1;
 						indices[index + 4] = indices[index] + 1;
 						indices[index + 5] = indices[index];
@@ -173,12 +159,9 @@ namespace vks
 			// Indices for quad patches (tessellation)
 			case topologyQuads:
 			{
-
 				indices = new uint32_t[w * w * 4];
-				for (uint32_t x = 0; x < w; x++)
-				{
-					for (uint32_t y = 0; y < w; y++)
-					{
+				for (uint32_t x = 0; x < w; x++) {
+					for (uint32_t y = 0; y < w; y++) {
 						uint32_t index = (x + y * w) * 4;
 						indices[index] = (x + y * patchsize);
 						indices[index + 1] = indices[index] + patchsize;
@@ -190,7 +173,6 @@ namespace vks
 				indexBufferSize = (w * w * 4) * sizeof(uint32_t);
 				break;
 			}
-
 			}
 
 			assert(indexBufferSize > 0);

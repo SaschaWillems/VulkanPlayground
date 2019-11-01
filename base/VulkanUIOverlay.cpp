@@ -443,6 +443,18 @@ namespace vks
 		return res;
 	}
 
+	bool UIOverlay::sliderFloat2(const char* caption, float &value0, float &value1, float min, float max)
+	{
+		float values[2] = { value0, value1 };
+		bool res = ImGui::SliderFloat2(caption, values ,min, max);
+		if (res) { 
+			updated = true; 
+			value0 = values[0];
+			value1 = values[1];
+		};
+		return res;
+	}
+
 	bool UIOverlay::sliderInt(const char* caption, int32_t* value, int32_t min, int32_t max)
 	{
 		bool res = ImGui::SliderInt(caption, value, min, max);

@@ -8,20 +8,21 @@ layout (set = 0, binding = 0) uniform UBO
 {
 	mat4 projection;
 	mat4 modelview;
-	vec4 lightPos;
+	vec4 lightDir;
 } ubo;
-layout (set = 0, binding = 1) uniform sampler2D displacementMap;
 
 layout (location = 0) out vec3 outNormal;
 layout (location = 1) out vec2 outUV;
 layout (location = 2) out vec3 outViewVec;
 layout (location = 3) out vec3 outLightVec;
 layout (location = 4) out vec3 outEyePos;
-layout (location = 5) out vec3 outsWorldPos;
+layout (location = 5) out vec3 outViewPos;
+layout (location = 6) out vec3 outPos;
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
 	vec4 clipPlane;
+	int shadows;
 } pushConsts;
 
 void main(void)
@@ -33,9 +34,11 @@ void main(void)
 		pos.y *= -1.0f;
 	}
 	gl_Position = ubo.projection * ubo.modelview * pos;
+	outPos = pos.xyz;
 	outViewVec = -pos.xyz;
-	outLightVec = normalize(ubo.lightPos.xyz + outViewVec);
+	outLightVec = normalize(ubo.lightDir.xyz + outViewVec);
 	outEyePos = vec3(ubo.modelview * pos);
+	outViewPos = (ubo.modelview * vec4(pos.xyz, 1.0)).xyz;
 
 	// Clip against reflection plane
 	if (length(pushConsts.clipPlane) != 0.0)  {
