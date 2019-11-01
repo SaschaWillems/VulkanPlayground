@@ -22,6 +22,6 @@ void main()
 	outUV = inUV;
 	outPos = ubo.projection * ubo.model * vec4(inPos.xyz, 1.0);
 	outNormal = inNormal;
+	outEyePos = ubo.cameraPos.xyz - inPos.xyz;
 	gl_Position = outPos;		
-	outEyePos = -ubo.cameraPos.xyz - vec3(ubo.model * vec4(inPos.xyz, 1.0));
 }

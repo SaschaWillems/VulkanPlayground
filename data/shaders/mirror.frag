@@ -21,7 +21,10 @@ layout (location = 0) out vec4 outFragColor;
 
 void main() 
 {
+	// @todo: fog
+
 	const vec4 tangent = vec4(1.0, 0.0, 0.0, 0.0);
+	const vec4 viewNormal = vec4(0.0, -1.0, 0.0, 0.0);
 	const vec4 bitangent = vec4(0.0, 0.0, 1.0, 0.0);
 	const float distortAmount = 0.05;
 
@@ -43,20 +46,21 @@ void main()
 	vec4 normal = texture(samplerWaterNormalMap, inUV * 8.0 + ubo.time);
 	normal = normalize(normal * 2.0 - 1.0);
 
-	vec3 viewReflection = normalize(reflect(-1.0 * inEyePos, normal.xyz));
-	float fresnel = dot(normal.xyz, viewReflection);
+	vec4 viewDir = normalize(vec4(inEyePos, 1.0));
+	vec4 viewTanSpace = normalize(vec4(dot(viewDir, tangent), dot(viewDir, bitangent), dot(viewDir, viewNormal), 1.0));	
+	vec4 viewReflection = normalize(reflect(-1.0 * viewTanSpace, normal));
+	float fresnel = dot(normal, viewReflection);	
 
 	vec4 dudv = normal * distortAmount;
 
 	if (gl_FrontFacing) {
 		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);
 		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);
-		outFragColor = mix(refraction, reflection, /*fresnel*/ 0.5);
-		outFragColor = reflection;
+		outFragColor = mix(refraction, reflection, fresnel);
 	} else{
 		outFragColor = vec4(0.0, 0.0, 0.0, 1.0);
 	}
 
 	outFragColor.a = 1.0;
-	//outFragColor.rgb = normal.rgb;
+//	outFragColor.rgb = fresnel.rrr;
 }
