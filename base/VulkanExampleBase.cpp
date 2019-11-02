@@ -115,37 +115,24 @@ const std::string VulkanExampleBase::getAssetPath()
 }
 #endif
 
-bool VulkanExampleBase::checkCommandBuffers()
-{
-	for (auto& cmdBuffer : drawCmdBuffers)
-	{
-		if (cmdBuffer == VK_NULL_HANDLE)
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
 void VulkanExampleBase::createCommandBuffers()
 {
-	// Create one command buffer for each swap chain image and reuse for rendering
-	drawCmdBuffers.resize(swapChain.imageCount);
-
-	VkCommandBufferAllocateInfo cmdBufAllocateInfo =
-		vks::initializers::commandBufferAllocateInfo(
-			cmdPool,
-			VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-			static_cast<uint32_t>(drawCmdBuffers.size()));
-
-	VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, drawCmdBuffers.data()));
+	commandBuffers.resize(swapChain.imageCount);
+	for (auto &commandBuffer : commandBuffers) {
+		commandBuffer = new CommandBuffer(device);
+		commandBuffer->setPool(cmdPool);
+		commandBuffer->create();
+	}
 }
 
 void VulkanExampleBase::destroyCommandBuffers()
 {
-	vkFreeCommandBuffers(device, cmdPool, static_cast<uint32_t>(drawCmdBuffers.size()), drawCmdBuffers.data());
+	for (auto& commandBuffer : commandBuffers) {
+		delete(commandBuffer);
+	}
 }
 
+// @todo: remove
 VkCommandBuffer VulkanExampleBase::createCommandBuffer(VkCommandBufferLevel level, bool begin)
 {
 	VkCommandBuffer cmdBuffer;
@@ -168,6 +155,7 @@ VkCommandBuffer VulkanExampleBase::createCommandBuffer(VkCommandBufferLevel leve
 	return cmdBuffer;
 }
 
+// @todo: remove
 void VulkanExampleBase::flushCommandBuffer(VkCommandBuffer commandBuffer, VkQueue queue, bool free)
 {
 	if (commandBuffer == VK_NULL_HANDLE)
@@ -2010,7 +1998,7 @@ void VulkanExampleBase::createSynchronizationPrimitives()
 {
 	// Wait fences to sync command buffer access
 	VkFenceCreateInfo fenceCreateInfo = vks::initializers::fenceCreateInfo(VK_FENCE_CREATE_SIGNALED_BIT);
-	waitFences.resize(drawCmdBuffers.size());
+	waitFences.resize(commandBuffers.size());
 	for (auto& fence : waitFences) {
 		VK_CHECK_RESULT(vkCreateFence(device, &fenceCreateInfo, nullptr, &fence));
 	}

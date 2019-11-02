@@ -46,4 +46,8 @@ public:
 		pushConstantRange.size = size;
 		pushConstantRanges.push_back(pushConstantRange);
 	}
+	VkPushConstantRange getPushConstantRange(uint32_t index) {
+		assert(index < pushConstantRanges.size());
+		return pushConstantRanges[index];
+	}
 };

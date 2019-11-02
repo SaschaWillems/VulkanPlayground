@@ -54,6 +54,8 @@
 #include "camera.hpp"
 #include "benchmark.hpp"
 
+#include "CommandBuffer.hpp"
+
 class VulkanExampleBase
 {
 private:	
@@ -103,7 +105,7 @@ protected:
 	// Contains command buffers and semaphores to be presented to the queue
 	VkSubmitInfo submitInfo;
 	// Command buffers used for rendering
-	std::vector<VkCommandBuffer> drawCmdBuffers;
+	std::vector<CommandBuffer*> commandBuffers;
 	// Global render pass for frame buffer writes
 	VkRenderPass renderPass;
 	// List of available frame buffers (same as number of swap chain images)
@@ -359,8 +361,6 @@ public:
 	// Create swap chain images
 	void setupSwapChain();
 
-	// Check if command buffers are valid (!= VK_NULL_HANDLE)
-	bool checkCommandBuffers();
 	// Create command buffers for drawing commands
 	void createCommandBuffers();
 	// Destroy all command buffers and set their handles to VK_NULL_HANDLE

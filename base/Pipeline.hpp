@@ -41,10 +41,6 @@ public:
 		pipelineCI.renderPass = renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, cache, 1, &pipelineCI, nullptr, &pso));
 	}
-	void bind(VkCommandBuffer cb) {
-		assert(pso != VK_NULL_HANDLE);
-		vkCmdBindPipeline(cb, bindPoint, pso);
-	}
 	void addShader(std::string filename) {
 		size_t extpos = filename.find('.');
 		size_t extend = filename.find('.', extpos + 1);
@@ -80,5 +76,11 @@ public:
 	}
 	void setCache(VkPipelineCache cache) {
 		this->cache = cache;
+	}
+	VkPipelineBindPoint getBindPoint() {
+		return bindPoint;
+	}
+	VkPipeline getHandle() {
+		return pso;
 	}
 };
