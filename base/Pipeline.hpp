@@ -9,9 +9,10 @@
 #pragma once
 
 #include <vector>
-
 #include "vulkan/vulkan.h"
+#include "VulkanInitializers.hpp"
 #include "VulkanTools.h"
+#include "PipelineLayout.hpp"
 
 class Pipeline {
 private:
@@ -68,6 +69,9 @@ public:
 	}
 	void setLayout(VkPipelineLayout layout) {
 		this->layout = layout;
+	}
+	void setLayout(PipelineLayout* layout) {
+		this->layout = layout->handle;
 	}
 	void setRenderPass(VkRenderPass renderPass) {
 		this->renderPass = renderPass;

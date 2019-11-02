@@ -25,12 +25,13 @@
 #include "VulkanHeightmap.hpp"
 
 #include "Pipeline.hpp"
+#include "PipelineLayout.hpp"
 #include "DescriptorSet.hpp"
+#include "DescriptorSetLayout.hpp"
 
 #define ENABLE_VALIDATION false
 
 #define FB_DIM 1024
-#define FB_COLOR_FORMAT VK_FORMAT_R8G8B8A8_UNORM
 
 #define TERRAIN_LAYER_COUNT 6
 
@@ -121,10 +122,9 @@ public:
 	} uboWaterPlane;
 
 	struct {
-		VkPipelineLayout textured;
-		VkPipelineLayout shaded;
-		VkPipelineLayout terrain;
-		VkPipelineLayout sky;
+		PipelineLayout* textured;
+		PipelineLayout* terrain;
+		PipelineLayout* sky;
 	} pipelineLayouts;
 
 	struct DescriptorSets {
@@ -135,10 +135,9 @@ public:
 	} descriptorSets;
 
 	struct {
-		VkDescriptorSetLayout textured;
-		VkDescriptorSetLayout shaded;
-		VkDescriptorSetLayout terrain;
-		VkDescriptorSetLayout skysphere;
+		DescriptorSetLayout* textured;
+		DescriptorSetLayout* terrain;
+		DescriptorSetLayout* skysphere;
 	} descriptorSetLayouts;
 
 	// Framebuffer for offscreen rendering
@@ -170,10 +169,10 @@ public:
 	};
 	struct DepthPass {
 		VkRenderPass renderPass;
-		VkPipelineLayout pipelineLayout;
+		PipelineLayout *pipelineLayout;
 		VkPipeline pipeline;
 		vks::Buffer uniformBuffer;
-		VkDescriptorSetLayout descriptorSetLayout;
+		DescriptorSetLayout *descriptorSetLayout;
 		DescriptorSet* descriptorSet;
 		struct UniformBlock {
 			std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMat;
@@ -260,12 +259,6 @@ public:
 		vkDestroyRenderPass(device, offscreenPass.renderPass, nullptr);
 		vkDestroySampler(device, offscreenPass.sampler, nullptr);
 		//vkDestroyFramebuffer(device, offscreenPass.frameBuffer, nullptr);
-
-		vkDestroyPipelineLayout(device, pipelineLayouts.textured, nullptr);
-		vkDestroyPipelineLayout(device, pipelineLayouts.shaded, nullptr);
-
-		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.shaded, nullptr);
-		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.textured, nullptr);
 
 		// Uniform buffers
 		uniformBuffers.vsShared.destroy();
@@ -487,25 +480,26 @@ public:
 		// Skysphere
 		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
 			pipelines.sky->bind(cb);
-			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky, 0, 1, &descriptorSets.skysphere->handle, 0, nullptr);
+			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky->handle, 0, 1, &descriptorSets.skysphere->handle, 0, nullptr);
 			models.skysphere.draw(cb);
 		}
 		
 		// Terrain
 		pipelines.terrain->bind(cb);
-		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.terrain, 0, 1, &descriptorSets.terrain->handle, 0, nullptr);
+		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.terrain->handle, 0, 1, &descriptorSets.terrain->handle, 0, nullptr);
 		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
 		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 		vkCmdDrawIndexed(cb, heightMap->indexCount, 1, 0, 0, 0);
-		vkCmdPushConstants(cb, pipelineLayouts.terrain, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConst), &pushConst);
+		vkCmdPushConstants(cb, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConst), &pushConst);
 	}
 
 	void drawShadowCasters(VkCommandBuffer cb, uint32_t cascadeIndex = 0) {
 		const VkDeviceSize offsets[1] = { 0 };
 		const CascadePushConstBlock pushConstBlock = { glm::vec4(0.0f), cascadeIndex };
 		pipelines.depthpass->bind(cb);
-		vkCmdPushConstants(cb, depthPass.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(CascadePushConstBlock), &pushConstBlock);
-		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout, 0, 1, &depthPass.descriptorSet->handle, 0, nullptr);
+		// @todo: Function fro pipelinelayout
+		vkCmdPushConstants(cb, depthPass.pipelineLayout->handle, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(CascadePushConstBlock), &pushConstBlock);
+		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout->handle, 0, 1, &depthPass.descriptorSet->handle, 0, nullptr);
 		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
 		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 		vkCmdDrawIndexed(cb, heightMap->indexCount, 1, 0, 0, 0);
@@ -884,13 +878,13 @@ public:
 				drawScene(drawCmdBuffers[i], SceneDrawType::sceneDrawTypeDisplay);
 
 				// Reflection plane
-				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.waterplane->handle, 0, nullptr);
+				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured->handle, 0, 1, &descriptorSets.waterplane->handle, 0, nullptr);
 				pipelines.mirror->bind(drawCmdBuffers[i]);
 				models.plane.draw(drawCmdBuffers[i]);
 
 				if (debugDisplay)
 				{
-					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.debugquad->handle, 0, nullptr);
+					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured->handle, 0, 1, &descriptorSets.debugquad->handle, 0, nullptr);
 					pipelines.debug->bind(drawCmdBuffers[i]);
 					vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &quad.vertices.buffer, offsets);
 					vkCmdBindIndexBuffer(drawCmdBuffers[i], quad.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -995,76 +989,54 @@ public:
 
 	void setupDescriptorSetLayout()
 	{
-		std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings;
-		VkDescriptorSetLayoutCreateInfo descriptorLayoutInfo;
-		VkPipelineLayoutCreateInfo pipelineLayoutInfo;
+		// Shared (use all layout bindings)
+		descriptorSetLayouts.textured = new DescriptorSetLayout(device);
+		descriptorSetLayouts.textured->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.textured->addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.textured->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.textured->addBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.textured->addBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.textured->addBinding(5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.textured->create();
 
-		setLayoutBindings = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,0),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 2),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 5),
-		};
-
-		// Shaded layouts (only use first layout binding)
-		descriptorLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings.data(), 1);
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayoutInfo, nullptr, &descriptorSetLayouts.shaded));
-
-		pipelineLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.shaded, 1);
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.shaded));
-
-		// Textured layouts (use all layout bindings)
-		descriptorLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings.data(), static_cast<uint32_t>(setLayoutBindings.size()));
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayoutInfo, nullptr, &descriptorSetLayouts.textured));
-
-		pipelineLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.textured, 1);
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.textured));
-
-		VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4) + sizeof(glm::vec4) + sizeof(uint32_t), 0);
+		pipelineLayouts.textured = new PipelineLayout(device);
+		pipelineLayouts.textured->addLayout(descriptorSetLayouts.textured);
+		pipelineLayouts.textured->create();
 
 		// Terrain
-		setLayoutBindings = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 2),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
-		};
+		descriptorSetLayouts.terrain = new DescriptorSetLayout(device);
+		descriptorSetLayouts.terrain->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->addBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->addBinding(4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->create();
 
-		descriptorLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings.data(), static_cast<uint32_t>(setLayoutBindings.size()));
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayoutInfo, nullptr, &descriptorSetLayouts.terrain));
-		pipelineLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.terrain, 1);
-		pipelineLayoutInfo.pushConstantRangeCount = 1;
-		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.terrain));
+		pipelineLayouts.terrain = new PipelineLayout(device);
+		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.terrain);
+		pipelineLayouts.terrain->addPushConstantRange(sizeof(glm::mat4) + sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		pipelineLayouts.terrain->create();
 
 		// Skysphere
-		setLayoutBindings = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT,1),
-		};
-		descriptorLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings.data(), static_cast<uint32_t>(setLayoutBindings.size()));
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayoutInfo, nullptr, &descriptorSetLayouts.skysphere));
-		pipelineLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.skysphere, 1);
-		pipelineLayoutInfo.pushConstantRangeCount = 1;
-		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.sky));
+		descriptorSetLayouts.skysphere = new DescriptorSetLayout(device);
+		descriptorSetLayouts.skysphere->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT);
+		descriptorSetLayouts.skysphere->addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.skysphere->create();
 
-		/* 
-			CSM 
-		*/
-		setLayoutBindings = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
-		};
-		descriptorLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings.data(), static_cast<uint32_t>(setLayoutBindings.size()));		
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayoutInfo, nullptr, &depthPass.descriptorSetLayout));
-		pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(CascadePushConstBlock), 0);
-		pipelineLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&depthPass.descriptorSetLayout, 1);
-		pipelineLayoutInfo.pushConstantRangeCount = 1;
-		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &depthPass.pipelineLayout));
+		pipelineLayouts.sky = new PipelineLayout(device);
+		pipelineLayouts.sky->addLayout(descriptorSetLayouts.skysphere);
+		pipelineLayouts.sky->addPushConstantRange(sizeof(glm::mat4) + sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT);
+		pipelineLayouts.sky->create();
+
+		// Shadow map cascades
+		depthPass.descriptorSetLayout = new DescriptorSetLayout(device);
+		depthPass.descriptorSetLayout->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT);
+		depthPass.descriptorSetLayout->create();
+
+		depthPass.pipelineLayout = new PipelineLayout(device);
+		depthPass.pipelineLayout->addLayout(depthPass.descriptorSetLayout);
+		depthPass.pipelineLayout->addPushConstantRange(sizeof(CascadePushConstBlock), 0, VK_SHADER_STAGE_VERTEX_BIT);
+		depthPass.pipelineLayout->create();
 	}
 
 	void setupDescriptorSet()

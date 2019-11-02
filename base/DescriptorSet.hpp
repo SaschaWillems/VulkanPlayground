@@ -9,8 +9,10 @@
 #pragma once
 
 #include <vector>
-
 #include "vulkan/vulkan.h"
+#include "VulkanInitializers.hpp"
+#include "VulkanTools.h"
+#include "DescriptorSetLayout.hpp"
 
 class DescriptorSet {
 private:
@@ -42,6 +44,9 @@ public:
 	}
 	void addLayout(VkDescriptorSetLayout layout) {
 		layouts.push_back(layout);
+	}
+	void addLayout(DescriptorSetLayout *layout) {
+		layouts.push_back(layout->handle);
 	}
 	void addDescriptor(VkWriteDescriptorSet descriptor) {
 		descriptors.push_back(descriptor);
