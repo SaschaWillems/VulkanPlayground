@@ -1175,10 +1175,6 @@ public:
 		std::vector<VkDynamicState> dynamicStateEnables = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 		VkPipelineDynamicStateCreateInfo dynamicState = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStateEnables);
 
-		// Solid rendering pipeline
-		// Load shaders
-		std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
-
 		// Vertex bindings and attributes
 		const std::vector<VkVertexInputBindingDescription> vertexInputBindings = {
 			vks::initializers::vertexInputBindingDescription(0, sizeof(vkglTF::Model::Vertex), VK_VERTEX_INPUT_RATE_VERTEX),
@@ -1203,8 +1199,6 @@ public:
 		pipelineCI.pViewportState = &viewportState;
 		pipelineCI.pDepthStencilState = &depthStencilState;
 		pipelineCI.pDynamicState = &dynamicState;
-		pipelineCI.stageCount = shaderStages.size();
-		pipelineCI.pStages = shaderStages.data();
 
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelineCI.layout = pipelineLayouts.textured;
