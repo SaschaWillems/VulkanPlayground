@@ -1190,7 +1190,8 @@ public:
 		vertexInputState.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributes.size());
 		vertexInputState.pVertexAttributeDescriptions = vertexInputAttributes.data();
 
-		VkGraphicsPipelineCreateInfo pipelineCI = vks::initializers::pipelineCreateInfo(pipelineLayouts.textured, renderPass, 0);
+		VkGraphicsPipelineCreateInfo pipelineCI{};
+		pipelineCI.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		pipelineCI.pVertexInputState = &vertexInputState;
 		pipelineCI.pInputAssemblyState = &inputAssemblyState;
 		pipelineCI.pRasterizationState = &rasterizationState;
@@ -1201,39 +1202,50 @@ public:
 		pipelineCI.pDynamicState = &dynamicState;
 
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
-		pipelineCI.layout = pipelineLayouts.textured;
 		depthStencilState.depthTestEnable = VK_FALSE;
+
 		pipelines.debug = new Pipeline(device);
+		pipelines.debug->setCreateInfo(pipelineCI);
+		pipelines.debug->setCache(pipelineCache);
+		pipelines.debug->setLayout(pipelineLayouts.textured);
+		pipelines.debug->setRenderPass(renderPass);
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.vert.spv");
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.frag.spv");
-		pipelines.debug->create(pipelineCI, pipelineCache);
+		pipelines.debug->create();
 		depthStencilState.depthTestEnable = VK_TRUE;
 
 		// Mirror
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelines.mirror = new Pipeline(device);
+		pipelines.mirror->setCreateInfo(pipelineCI);
+		pipelines.mirror->setCache(pipelineCache);
+		pipelines.mirror->setLayout(pipelineLayouts.textured);
+		pipelines.mirror->setRenderPass(renderPass);
 		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.vert.spv");
 		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.frag.spv");
-		pipelines.mirror->create(pipelineCI, pipelineCache);
-
-		// Flip culling
-		//rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+		pipelines.mirror->create();
 
 		// Terrain
-		pipelineCI.layout = pipelineLayouts.terrain;
 		pipelines.terrain = new Pipeline(device);
+		pipelines.terrain->setCreateInfo(pipelineCI);
+		pipelines.terrain->setCache(pipelineCache);
+		pipelines.terrain->setLayout(pipelineLayouts.terrain);
+		pipelines.terrain->setRenderPass(renderPass);
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.vert.spv");
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.frag.spv");
-		pipelines.terrain->create(pipelineCI, pipelineCache);
+		pipelines.terrain->create();
 
 		// Sky
-		pipelineCI.layout = pipelineLayouts.sky;
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		pipelines.sky = new Pipeline(device);
+		pipelines.sky->setCreateInfo(pipelineCI);
+		pipelines.sky->setCache(pipelineCache);
+		pipelines.sky->setLayout(pipelineLayouts.sky);
+		pipelines.sky->setRenderPass(renderPass);
 		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.vert.spv");
 		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
-		pipelines.sky->create(pipelineCI, pipelineCache);
+		pipelines.sky->create();
 
 		depthStencilState.depthWriteEnable = VK_TRUE;
 
@@ -1245,12 +1257,14 @@ public:
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		// Enable depth clamp (if available)
 		rasterizationState.depthClampEnable = deviceFeatures.depthClamp;
-		pipelineCI.layout = depthPass.pipelineLayout;
-		pipelineCI.renderPass = depthPass.renderPass;
 		pipelines.depthpass = new Pipeline(device);
+		pipelines.depthpass->setCreateInfo(pipelineCI);
+		pipelines.depthpass->setCache(pipelineCache);
+		pipelines.depthpass->setLayout(depthPass.pipelineLayout);
+		pipelines.depthpass->setRenderPass(depthPass.renderPass);
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/depthpass.vert.spv");
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/terrain_depthpass.frag.spv");
-		pipelines.depthpass->create(pipelineCI, pipelineCache);
+		pipelines.depthpass->create();
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms

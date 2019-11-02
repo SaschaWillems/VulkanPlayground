@@ -18,6 +18,10 @@ private:
 	VkDevice device = VK_NULL_HANDLE;
 	VkPipeline pso = VK_NULL_HANDLE;
 	VkPipelineBindPoint bindPoint;
+	VkPipelineLayout layout;
+	VkRenderPass renderPass;
+	VkGraphicsPipelineCreateInfo pipelineCI;
+	VkPipelineCache cache;
 	std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
 	std::vector<VkShaderModule> shaderModules;
 public:
@@ -28,12 +32,11 @@ public:
 		// @todo: destroy shader modules
 		vkDestroyPipeline(device, pso, nullptr);
 	}
-	void create(VkGraphicsPipelineCreateInfo ci, VkPipelineCache cache) {
-		this->device = device;
-		this->bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-		VkGraphicsPipelineCreateInfo pipelineCI = ci;
+	void create() {
 		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCI.pStages = shaderStages.data();
+		pipelineCI.layout = layout;
+		pipelineCI.renderPass = renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, cache, 1, &pipelineCI, nullptr, &pso));
 	}
 	void bind(VkCommandBuffer cb) {
@@ -62,5 +65,18 @@ public:
 		assert(shaderStageCI.module != VK_NULL_HANDLE);
 		shaderModules.push_back(shaderStageCI.module);
 		shaderStages.push_back(shaderStageCI);
+	}
+	void setLayout(VkPipelineLayout layout) {
+		this->layout = layout;
+	}
+	void setRenderPass(VkRenderPass renderPass) {
+		this->renderPass = renderPass;
+	}
+	void setCreateInfo(VkGraphicsPipelineCreateInfo pipelineCI) {
+		this->pipelineCI = pipelineCI;
+		this->bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+	}
+	void setCache(VkPipelineCache cache) {
+		this->cache = cache;
 	}
 };
