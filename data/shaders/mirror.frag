@@ -1,7 +1,7 @@
 #version 450
 
 #define SHADOW_MAP_CASCADE_COUNT 4
-#define ambient 0.3
+#define ambient 0.2
 
 layout (binding = 0) uniform UBO 
 {
@@ -16,7 +16,7 @@ layout (binding = 5) uniform UBOCSM {
 	vec4 cascadeSplits;
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	mat4 inverseViewMat;
-	vec3 lightDir;
+	vec4 lightDir;
 } uboCSM;
 
 layout (set = 0, binding = 1) uniform sampler2D samplerRefraction;
@@ -89,12 +89,25 @@ float shadowMapping()
 	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inLPos, 1.0);	
 
 	float shadow = 0;
-	return filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
+	bool enablePCF = false;
+	if (enablePCF) {
+		return filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
+	} else {
+		return textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
+	}
+}
+
+float fog(float density)
+{
+	const float LOG2 = -1.442695;
+	float dist = gl_FragCoord.z / gl_FragCoord.w * 0.1;
+	float d = density * dist;
+	return 1.0 - clamp(exp2(d * d * LOG2), 0.0, 1.0);
 }
 
 void main() 
 {
-	// @todo: fog
+	const vec3 fogColor = vec3(0.47, 0.5, 0.67);
 
 	const vec4 tangent = vec4(1.0, 0.0, 0.0, 0.0);
 	const vec4 viewNormal = vec4(0.0, -1.0, 0.0, 0.0);
@@ -128,12 +141,14 @@ void main()
 
 	if (gl_FrontFacing) {
 		float shadow = shadowMapping();
-		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);
-		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);
-		outFragColor = mix(refraction, reflection, fresnel) * shadow;
+		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st) * (ambient + shadow);
+		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st) * (ambient + shadow);
+		outFragColor = mix(refraction, reflection, fresnel);
 	} else{
 		outFragColor = vec4(0.0, 0.0, 0.0, 1.0);
 	}
+
+	outFragColor.rgb = mix(outFragColor.rgb, fogColor, fog(0.5));
 
 	outFragColor.a = 1.0;
 //	outFragColor.rgb = fresnel.rrr;

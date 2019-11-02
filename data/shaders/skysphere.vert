@@ -15,10 +15,12 @@ layout (set = 0, binding = 0) uniform UBO
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
 	vec4 clipPlane;
+	int _dummy;
 } pushConsts;
 
 void main(void)
 {
 	gl_Position = ubo.projection * ubo.modelview * pushConsts.scale * vec4(inPos.xyz, 1.0);
 	outUV = inUV;
+	outUV.t = 1.0f - outUV.t;
 }

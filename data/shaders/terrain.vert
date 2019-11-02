@@ -22,7 +22,7 @@ layout (location = 6) out vec3 outPos;
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
 	vec4 clipPlane;
-	int shadows;
+	uint shadows;
 } pushConsts;
 
 void main(void)

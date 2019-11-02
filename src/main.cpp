@@ -54,6 +54,15 @@ public:
 
 	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
 
+	struct CascadeDebug {
+		bool enabled = false;
+		int32_t cascadeIndex = 0;
+		Pipeline* pipeline;
+		PipelineLayout* pipelineLayout;
+		DescriptorSet* descriptorSet;
+		DescriptorSetLayout* descriptorSetLayout;
+	} cascadeDebug;
+
 	struct {
 		Pipeline* debug;
 		Pipeline* mirror;
@@ -159,8 +168,8 @@ public:
 
 	float cascadeSplitLambda = 0.95f;
 
-	float zNear = 0.5f;
-	float zFar = 48.0f;
+	float zNear = 1.0f;
+	float zFar = 32.0f;
 
 	// Resources of the depth map generation pass
 	struct CascadePushConstBlock {
@@ -210,7 +219,7 @@ public:
 	{
 		title = "Vulkan Playground";
 		camera.type = Camera::CameraType::firstperson;
-		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 512.0f);
+		camera.setPerspective(45.0f, (float)width / (float)height, zNear, zFar);
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
 		//camera.setTranslation(glm::vec3(18.0f, 22.5f, 57.5f));
 		camera.setTranslation(glm::vec3(0.0f, 1.0f, -6.0f));
@@ -891,6 +900,14 @@ public:
 					vkCmdDrawIndexed(drawCmdBuffers[i], quad.indexCount, 1, 0, 0, 0);
 				}
 
+				if (cascadeDebug.enabled) {
+					const CascadePushConstBlock pushConstBlock = { glm::vec4(0.0f), cascadeDebug.cascadeIndex };
+					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, cascadeDebug.pipelineLayout->handle, 0, 1, &cascadeDebug.descriptorSet->handle, 0, nullptr);
+					cascadeDebug.pipeline->bind(drawCmdBuffers[i]);
+					cascadeDebug.pipelineLayout->updatePushConstant(drawCmdBuffers[i], 0, &pushConstBlock);
+					vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
+				}
+
 				drawUI(drawCmdBuffers[i]);
 
 				vkCmdEndRenderPass(drawCmdBuffers[i]);
@@ -1037,6 +1054,15 @@ public:
 		depthPass.pipelineLayout->addLayout(depthPass.descriptorSetLayout);
 		depthPass.pipelineLayout->addPushConstantRange(sizeof(CascadePushConstBlock), 0, VK_SHADER_STAGE_VERTEX_BIT);
 		depthPass.pipelineLayout->create();
+		// Cascade debug
+		cascadeDebug.descriptorSetLayout = new DescriptorSetLayout(device);
+		cascadeDebug.descriptorSetLayout->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		cascadeDebug.descriptorSetLayout->create();
+
+		cascadeDebug.pipelineLayout = new PipelineLayout(device);
+		cascadeDebug.pipelineLayout->addLayout(cascadeDebug.descriptorSetLayout);
+		cascadeDebug.pipelineLayout->addPushConstantRange(sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT);
+		cascadeDebug.pipelineLayout->create();
 	}
 
 	void setupDescriptorSet()
@@ -1100,6 +1126,12 @@ public:
 		depthPass.descriptorSet->addLayout(depthPass.descriptorSetLayout);
 		depthPass.descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &depthPass.uniformBuffer.descriptor);
 		depthPass.descriptorSet->create();
+		// Cascade debug
+		cascadeDebug.descriptorSet = new DescriptorSet(device);
+		cascadeDebug.descriptorSet->setPool(descriptorPool);
+		cascadeDebug.descriptorSet->addLayout(cascadeDebug.descriptorSetLayout);
+		cascadeDebug.descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
+		cascadeDebug.descriptorSet->create();
 	}
 
 	void preparePipelines()
@@ -1143,6 +1175,7 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthTestEnable = VK_FALSE;
 
+		// Debug
 		pipelines.debug = new Pipeline(device);
 		pipelines.debug->setCreateInfo(pipelineCI);
 		pipelines.debug->setCache(pipelineCache);
@@ -1151,6 +1184,15 @@ public:
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.vert.spv");
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.frag.spv");
 		pipelines.debug->create();
+		// Debug cascades
+		cascadeDebug.pipeline = new Pipeline(device);
+		cascadeDebug.pipeline->setCreateInfo(pipelineCI);
+		cascadeDebug.pipeline->setCache(pipelineCache);
+		cascadeDebug.pipeline->setLayout(cascadeDebug.pipelineLayout);
+		cascadeDebug.pipeline->setRenderPass(renderPass);
+		cascadeDebug.pipeline->addShader(getAssetPath() + "shaders/debug_csm.vert.spv");
+		cascadeDebug.pipeline->addShader(getAssetPath() + "shaders/debug_csm.frag.spv");
+		cascadeDebug.pipeline->create();
 		depthStencilState.depthTestEnable = VK_TRUE;
 
 		// Mirror
@@ -1188,10 +1230,7 @@ public:
 
 		depthStencilState.depthWriteEnable = VK_TRUE;
 
-		/*
-			CSM
-		*/
-		// No blend attachment states (no color attachments used)
+		// Shadow map depth pass
 		colorBlendState.attachmentCount = 0;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		// Enable depth clamp (if available)
@@ -1238,12 +1277,14 @@ public:
 		lightPos = glm::vec4(20.0f, -15.0f, -15.0f, 0.0f) * radius;
 		lightPos = glm::vec4(-20.0f, -15.0f, -15.0f, 0.0f) * radius;
 		lightPos = glm::vec4(-20.0f, -15.0f, 20.0f, 0.0f) * radius;
+		// @todo
+		lightPos = glm::vec4(20.0f, -10.0f, 20.0f, 0.0f);
 
 		//float angle = glm::radians(timer * 360.0f);
 		//lightPos = glm::vec4(cos(angle) * radius, -15.0f, sin(angle) * radius, 0.0f);
 
-		uboTerrain.lightDir = glm::normalize(lightPos);
-		uboWaterPlane.lightDir = glm::normalize(lightPos);
+		uboTerrain.lightDir = glm::normalize(-lightPos);
+		uboWaterPlane.lightDir = glm::normalize(-lightPos);
 
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
@@ -1279,12 +1320,12 @@ public:
 	}
 
 	void updateUniformBufferCSM() {
-		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+		for (auto i = 0; i < cascades.size(); i++) {
 			depthPass.ubo.cascadeViewProjMat[i] = cascades[i].viewProjMatrix;
 		}
 		memcpy(depthPass.uniformBuffer.mapped, &depthPass.ubo, sizeof(depthPass.ubo));
 
-		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+		for (auto i = 0; i < cascades.size(); i++) {
 			uboCSM.cascadeSplits[i] = cascades[i].splitDepth;
 			uboCSM.cascadeViewProjMat[i] = cascades[i].viewProjMatrix;
 		}
@@ -1337,7 +1378,7 @@ public:
 		if (!prepared)
 			return;
 		draw();
-		if (!paused)
+		if (!paused || camera.updated)
 		{
 			updateCascades();
 			updateUniformBuffers();
@@ -1354,9 +1395,21 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
 		bool updateTerrain = false;
-		if (overlay->header("Settings")) {
+		if (overlay->header("Debugging")) {
 			if (overlay->checkBox("Display render target", &debugDisplay)) {
 				buildCommandBuffers();
+			}
+			if (overlay->checkBox("Display cascades", &cascadeDebug.enabled)) {
+				buildCommandBuffers();
+			}
+			if (cascadeDebug.enabled) {
+				if (overlay->sliderInt("Cascade", &cascadeDebug.cascadeIndex, 0, SHADOW_MAP_CASCADE_COUNT - 1)) {
+					buildCommandBuffers();
+				}
+			}
+			if (overlay->sliderFloat("Split lambda", &cascadeSplitLambda, 0.1f, 1.0f)) {
+				updateCascades();
+				updateUniformBuffers();
 			}
 		}
 		if (overlay->header("Terrain layers")) {

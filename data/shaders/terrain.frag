@@ -13,19 +13,19 @@ layout (set = 0, binding = 0) uniform UBO
 } ubo;
 
 #define SHADOW_MAP_CASCADE_COUNT 4
-#define ambient 0.3
+#define ambient 0.2
 
 layout (binding = 4) uniform UBOCSM {
 	vec4 cascadeSplits;
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	mat4 inverseViewMat;
-	vec3 lightDir;
+	vec4 lightDir;
 } uboCSM;
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
 	vec4 clipPlane;
-	int shadows;
+	uint shadows;
 } pushConsts;
 
 layout (location = 0) in vec3 inNormal;
@@ -122,8 +122,13 @@ void main()
 	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inPos, 1.0);	
 
 	float shadow = 0;
+	bool enablePCF = false;
 	if (pushConsts.shadows > 0) {
-		shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
+		if (enablePCF) {
+			shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
+		} else {
+			shadow = textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
+		}
 		if (inPos.y > 0.0f) {
 			shadow = 1.0f;
 		}
@@ -135,9 +140,27 @@ void main()
 	// Directional light
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(-ubo.lightDir.xyz);
-	vec3 H = normalize(L + inViewPos);
-	float diffuse = max(dot(N, L), ambient);
-	vec3 lightColor = vec3(1.0);
-	vec3 color  = max(lightColor * (diffuse * sampleTerrainLayer()) , vec3(0.0)) * shadow;
+	float diffuse = dot(N, L);
+	vec3 color = (ambient.rrr + (shadow) * (diffuse/* + specular*/)) * sampleTerrainLayer();
 	outFragColor.rgb = mix(color, fogColor, fog(0.5));
+
+	// Color cascades (if enabled)
+	bool colorCascades = false;
+	if (colorCascades) {
+		switch(cascadeIndex) {
+			case 0 : 
+				outFragColor.rgb *= vec3(1.0f, 0.25f, 0.25f);
+				break;
+			case 1 : 
+				outFragColor.rgb *= vec3(0.25f, 1.0f, 0.25f);
+				break;
+			case 2 : 
+				outFragColor.rgb *= vec3(0.25f, 0.25f, 1.0f);
+				break;
+			case 3 : 
+				outFragColor.rgb *= vec3(1.0f, 1.0f, 0.25f);
+				break;
+		}
+	}
+
 }

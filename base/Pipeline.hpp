@@ -19,7 +19,7 @@ private:
 	VkDevice device = VK_NULL_HANDLE;
 	VkPipeline pso = VK_NULL_HANDLE;
 	VkPipelineBindPoint bindPoint;
-	VkPipelineLayout layout;
+	PipelineLayout* layout = nullptr;
 	VkRenderPass renderPass;
 	VkGraphicsPipelineCreateInfo pipelineCI;
 	VkPipelineCache cache;
@@ -34,9 +34,10 @@ public:
 		vkDestroyPipeline(device, pso, nullptr);
 	}
 	void create() {
+		assert(layout);
 		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCI.pStages = shaderStages.data();
-		pipelineCI.layout = layout;
+		pipelineCI.layout = layout->handle;
 		pipelineCI.renderPass = renderPass;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, cache, 1, &pipelineCI, nullptr, &pso));
 	}
@@ -67,11 +68,8 @@ public:
 		shaderModules.push_back(shaderStageCI.module);
 		shaderStages.push_back(shaderStageCI);
 	}
-	void setLayout(VkPipelineLayout layout) {
-		this->layout = layout;
-	}
 	void setLayout(PipelineLayout* layout) {
-		this->layout = layout->handle;
+		this->layout = layout;
 	}
 	void setRenderPass(VkRenderPass renderPass) {
 		this->renderPass = renderPass;
