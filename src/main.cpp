@@ -25,6 +25,7 @@
 #include "VulkanHeightmap.hpp"
 
 #include "Pipeline.hpp"
+#include "DescriptorSet.hpp"
 
 #define ENABLE_VALIDATION false
 
@@ -126,13 +127,11 @@ public:
 		VkPipelineLayout sky;
 	} pipelineLayouts;
 
-	struct {
-		VkDescriptorSet offscreen;
-		VkDescriptorSet mirror;
-		VkDescriptorSet model;
-		VkDescriptorSet debugQuad;
-		VkDescriptorSet terrain;
-		VkDescriptorSet skysphere;
+	struct DescriptorSets {
+		DescriptorSet* waterplane;
+		DescriptorSet* debugquad;
+		DescriptorSet* terrain;
+		DescriptorSet* skysphere;
 	} descriptorSets;
 
 	struct {
@@ -175,7 +174,7 @@ public:
 		VkPipeline pipeline;
 		vks::Buffer uniformBuffer;
 		VkDescriptorSetLayout descriptorSetLayout;
-		VkDescriptorSet descriptorSet;
+		DescriptorSet* descriptorSet;
 		struct UniformBlock {
 			std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMat;
 		} ubo;
@@ -197,7 +196,7 @@ public:
 	// Contains all resources required for a single shadow map cascade
 	struct Cascade {
 		VkFramebuffer frameBuffer;
-		VkDescriptorSet descriptorSet;
+		DescriptorSet* descriptorSet;
 		VkImageView view;
 		float splitDepth;
 		glm::mat4 viewProjMatrix;
@@ -488,13 +487,13 @@ public:
 		// Skysphere
 		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
 			pipelines.sky->bind(cb);
-			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky, 0, 1, &descriptorSets.skysphere, 0, nullptr);
+			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky, 0, 1, &descriptorSets.skysphere->handle, 0, nullptr);
 			models.skysphere.draw(cb);
 		}
 		
 		// Terrain
 		pipelines.terrain->bind(cb);
-		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.terrain, 0, 1, &descriptorSets.terrain, 0, nullptr);
+		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.terrain, 0, 1, &descriptorSets.terrain->handle, 0, nullptr);
 		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
 		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 		vkCmdPushConstants(cb, pipelineLayouts.terrain, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pushConst), &pushConst);
@@ -506,7 +505,7 @@ public:
 		const CascadePushConstBlock pushConstBlock = { glm::vec4(0.0f), cascadeIndex };
 		pipelines.depthpass->bind(cb);
 		vkCmdPushConstants(cb, depthPass.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(CascadePushConstBlock), &pushConstBlock);
-		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout, 0, 1, &depthPass.descriptorSet, 0, nullptr);
+		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout, 0, 1, &depthPass.descriptorSet->handle, 0, nullptr);
 		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
 		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 		vkCmdDrawIndexed(cb, heightMap->indexCount, 1, 0, 0, 0);
@@ -885,13 +884,13 @@ public:
 				drawScene(drawCmdBuffers[i], SceneDrawType::sceneDrawTypeDisplay);
 
 				// Reflection plane
-				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.mirror, 0, nullptr);
+				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.waterplane->handle, 0, nullptr);
 				pipelines.mirror->bind(drawCmdBuffers[i]);
 				models.plane.draw(drawCmdBuffers[i]);
 
 				if (debugDisplay)
 				{
-					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.debugQuad, 0, nullptr);
+					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.debugquad->handle, 0, nullptr);
 					pipelines.debug->bind(drawCmdBuffers[i]);
 					vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &quad.vertices.buffer, offsets);
 					vkCmdBindIndexBuffer(drawCmdBuffers[i], quad.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1073,94 +1072,62 @@ public:
 		VkDescriptorImageInfo depthMapDescriptor = vks::initializers::descriptorImageInfo(depth.sampler, depth.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
 		// Water plane
-		VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.textured,1);
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.mirror));
-
-		std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
-			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.vsMirror.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &offscreenPass.refraction.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &offscreenPass.reflection.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &textures.waterNormalMap.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &depthMapDescriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5, &uniformBuffers.CSM.descriptor),
-		};
-		vkUpdateDescriptorSets(device, writeDescriptorSets.size(), writeDescriptorSets.data(), 0, NULL);
-
+		descriptorSets.waterplane = new DescriptorSet(device);
+		descriptorSets.waterplane->setPool(descriptorPool);
+		descriptorSets.waterplane->addLayout(descriptorSetLayouts.textured);
+		descriptorSets.waterplane->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsMirror.descriptor);
+		descriptorSets.waterplane->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.refraction.descriptor);
+		descriptorSets.waterplane->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.reflection.descriptor);
+		descriptorSets.waterplane->addDescriptor(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.waterNormalMap.descriptor);
+		descriptorSets.waterplane->addDescriptor(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
+		descriptorSets.waterplane->addDescriptor(5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
+		descriptorSets.waterplane->create();
+			   			   		
 		// Debug quad
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.debugQuad));
-		std::vector<VkWriteDescriptorSet> debugQuadWriteDescriptorSets = {
-			vks::initializers::writeDescriptorSet(descriptorSets.debugQuad, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.vsDebugQuad.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.debugQuad, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &offscreenPass.reflection.descriptor),
-			// @todo
-			//vks::initializers::writeDescriptorSet(descriptorSets.mirror, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &offscreenPass.reflection.descriptor),
-		};
-		vkUpdateDescriptorSets(device, debugQuadWriteDescriptorSets.size(), debugQuadWriteDescriptorSets.data(), 0, NULL);
-
-		// Shaded descriptor sets
-		allocInfo.pSetLayouts = &descriptorSetLayouts.shaded;
-
-		// Model
-		// No texture
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.model));
-
-		std::vector<VkWriteDescriptorSet> modelWriteDescriptorSets = {
-			vks::initializers::writeDescriptorSet(descriptorSets.model, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.vsShared.descriptor)
-		};
-		vkUpdateDescriptorSets(device, modelWriteDescriptorSets.size(), modelWriteDescriptorSets.data(), 0, NULL);
-
-		// Offscreen
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.offscreen));
-
-		std::vector<VkWriteDescriptorSet> offScreenWriteDescriptorSets = {
-			vks::initializers::writeDescriptorSet(descriptorSets.offscreen, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.vsOffScreen.descriptor)
-		};
-		vkUpdateDescriptorSets(device, offScreenWriteDescriptorSets.size(), offScreenWriteDescriptorSets.data(), 0, NULL);
-
-		//
+		descriptorSets.debugquad = new DescriptorSet(device);
+		descriptorSets.debugquad->setPool(descriptorPool);
+		descriptorSets.debugquad->addLayout(descriptorSetLayouts.textured);
+		descriptorSets.debugquad->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsDebugQuad.descriptor);
+		descriptorSets.debugquad->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.reflection.descriptor);
+		descriptorSets.debugquad->create();
 
 		// Terrain
-		allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.terrain, 1);
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.terrain));
-		writeDescriptorSets = {
-			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.terrain.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &textures.heightMap.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.terrainArray.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &depthMapDescriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.terrain, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4, &uniformBuffers.CSM.descriptor),
-		};
-		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
+		descriptorSets.terrain = new DescriptorSet(device);
+		descriptorSets.terrain->setPool(descriptorPool);
+		descriptorSets.terrain->addLayout(descriptorSetLayouts.terrain);
+		descriptorSets.terrain->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.terrain.descriptor);
+		descriptorSets.terrain->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.heightMap.descriptor);
+		descriptorSets.terrain->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
+		descriptorSets.terrain->addDescriptor(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
+		descriptorSets.terrain->addDescriptor(4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
+		descriptorSets.terrain->create();
 
 		// Skysphere
-		allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.skysphere, 1);
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.skysphere));
-		writeDescriptorSets = {
-			vks::initializers::writeDescriptorSet(descriptorSets.skysphere, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.sky.descriptor),
-			vks::initializers::writeDescriptorSet(descriptorSets.skysphere, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &textures.skySphere.descriptor),
-		};
-		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
+		descriptorSets.skysphere = new DescriptorSet(device);
+		descriptorSets.skysphere->setPool(descriptorPool);
+		descriptorSets.skysphere->addLayout(descriptorSetLayouts.skysphere);
+		descriptorSets.skysphere->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.sky.descriptor);
+		descriptorSets.skysphere->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.skySphere.descriptor);
+		descriptorSets.skysphere->create();
 
-		/*
-			CSM
-		*/
-		// Per-cascade descriptor sets
-		// Each descriptor set represents a single layer of the array texture
-		// @todo: allocInfo
-		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
-			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &cascades[i].descriptorSet));
+		// Shadow map cascades (one set per cascade)
+		// @todo: Doesn't make sense, all refer to same depth
+		for (auto i = 0; i < cascades.size(); i++) {
 			VkDescriptorImageInfo cascadeImageInfo = vks::initializers::descriptorImageInfo(depth.sampler, depth.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
-			writeDescriptorSets = {
-				vks::initializers::writeDescriptorSet(cascades[i].descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &depthPass.uniformBuffer.descriptor),
-				vks::initializers::writeDescriptorSet(cascades[i].descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &cascadeImageInfo)
-			};
-			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
+			cascades[i].descriptorSet = new DescriptorSet(device);
+			cascades[i].descriptorSet->setPool(descriptorPool);
+			cascades[i].descriptorSet->addLayout(descriptorSetLayouts.textured);
+			cascades[i].descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &depthPass.uniformBuffer.descriptor);
+			cascades[i].descriptorSet->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cascadeImageInfo);
+			cascades[i].descriptorSet->create();
 		}
 
-		allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &depthPass.descriptorSetLayout, 1);
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &depthPass.descriptorSet));
-		writeDescriptorSets = {
-			vks::initializers::writeDescriptorSet(depthPass.descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &depthPass.uniformBuffer.descriptor),
-		};
-		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);		
+		// Depth pass
+		depthPass.descriptorSet = new DescriptorSet(device);
+		depthPass.descriptorSet->setPool(descriptorPool);
+		depthPass.descriptorSet->addLayout(depthPass.descriptorSetLayout);
+		depthPass.descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &depthPass.uniformBuffer.descriptor);
+		depthPass.descriptorSet->create();
 	}
 
 	void preparePipelines()
