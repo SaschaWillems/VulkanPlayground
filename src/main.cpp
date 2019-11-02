@@ -38,7 +38,7 @@
 #if defined(__ANDROID__)
 #define SHADOWMAP_DIM 2048
 #else
-#define SHADOWMAP_DIM 8192
+#define SHADOWMAP_DIM 4096
 #endif
 
 #define SHADOW_MAP_CASCADE_COUNT 4
@@ -46,7 +46,8 @@
 class VulkanExample : public VulkanExampleBase
 {
 public:
-	bool debugDisplay = false;
+	bool debugDisplayReflection = false;
+	bool debugDisplayRefraction = false;
 
 	vks::HeightMap* heightMap;
 
@@ -71,12 +72,6 @@ public:
 		Pipeline* depthpass;
 	} pipelines;
 
-	struct Quad {
-		uint32_t indexCount;
-		vks::Buffer vertices;
-		vks::Buffer indices;
-	} quad;
-
 	struct Textures {
 		vks::Texture2D heightMap;
 		vks::Texture2D skySphere;
@@ -90,6 +85,7 @@ public:
 	struct Models {
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
+		vkglTF::Model testscene;
 	} models;
 
 	struct {
@@ -131,6 +127,7 @@ public:
 	} uboWaterPlane;
 
 	struct {
+		PipelineLayout* debug;
 		PipelineLayout* textured;
 		PipelineLayout* terrain;
 		PipelineLayout* sky;
@@ -168,8 +165,8 @@ public:
 
 	float cascadeSplitLambda = 0.95f;
 
-	float zNear = 1.0f;
-	float zFar = 32.0f;
+	float zNear = 0.5f;
+	float zFar = 48.0f;
 
 	// Resources of the depth map generation pass
 	struct CascadePushConstBlock {
@@ -212,6 +209,7 @@ public:
 			vkDestroyImageView(device, view, nullptr);
 			vkDestroyFramebuffer(device, frameBuffer, nullptr);
 		}
+		VkDescriptorImageInfo descriptor;
 	};
 	std::array<Cascade, SHADOW_MAP_CASCADE_COUNT> cascades;
 
@@ -228,6 +226,9 @@ public:
 		camera.setRotation({ -27.0000000, 0.000000000, 0.000000000 });
 		camera.setPosition({ -0.0402765162, 7.17239332, -15.7546043 });
 		timerSpeed *= 0.05f;
+		// @todo
+		camera.setPosition(glm::vec3(-0.12f, 1.14f, -2.25f));
+		camera.setRotation(glm::vec3(-17.0f, 7.0f, 0.0f));
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;
 		enabledFeatures.samplerAnisotropy = VK_TRUE;
@@ -342,7 +343,7 @@ public:
 		attchmentDescriptions[1].format = fbDepthFormat;
 		attchmentDescriptions[1].samples = VK_SAMPLE_COUNT_1_BIT;
 		attchmentDescriptions[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-		attchmentDescriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		attchmentDescriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		attchmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		attchmentDescriptions[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		attchmentDescriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -461,7 +462,7 @@ public:
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &offscreenPass.reflection.frameBuffer));
 	}
 
-	void drawScene(VkCommandBuffer cb, SceneDrawType drawType)
+	void drawScene(CommandBuffer* cb, SceneDrawType drawType)
 	{
 		// @todo: rename to localMat
 		struct PushConst {
@@ -484,34 +485,25 @@ public:
 			break;
 		}
 
-		const VkDeviceSize offsets[1] = { 0 };
-		
 		// Skysphere
-		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
-			pipelines.sky->bind(cb);
-			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky->handle, 0, 1, &descriptorSets.skysphere->handle, 0, nullptr);
-			models.skysphere.draw(cb);
-		}
+		cb->bindPipeline(pipelines.sky);
+		cb->bindDescriptorSets(pipelineLayouts.sky, { descriptorSets.skysphere }, 0);
+		cb->updatePushConstant(pipelineLayouts.sky, 0, &pushConst);
+		models.skysphere.draw(cb->handle);
 		
 		// Terrain
-		pipelines.terrain->bind(cb);
-		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.terrain->handle, 0, 1, &descriptorSets.terrain->handle, 0, nullptr);
-		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
-		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-		vkCmdDrawIndexed(cb, heightMap->indexCount, 1, 0, 0, 0);
-		vkCmdPushConstants(cb, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConst), &pushConst);
+		cb->bindPipeline(pipelines.terrain);
+		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
+		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
+		heightMap->draw(cb->handle);
 	}
 
-	void drawShadowCasters(VkCommandBuffer cb, uint32_t cascadeIndex = 0) {
-		const VkDeviceSize offsets[1] = { 0 };
-		const CascadePushConstBlock pushConstBlock = { glm::vec4(0.0f), cascadeIndex };
-		pipelines.depthpass->bind(cb);
-		// @todo: Function fro pipelinelayout
-		vkCmdPushConstants(cb, depthPass.pipelineLayout->handle, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(CascadePushConstBlock), &pushConstBlock);
-		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout->handle, 0, 1, &depthPass.descriptorSet->handle, 0, nullptr);
-		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
-		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-		vkCmdDrawIndexed(cb, heightMap->indexCount, 1, 0, 0, 0);
+	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
+		const CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
+		cb->bindPipeline(pipelines.depthpass);
+		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
+		cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
+		heightMap->draw(cb->handle);
 	}
 
 	/*
@@ -739,7 +731,7 @@ public:
 		}
 	}
 
-	void drawCSM(VkCommandBuffer cmdBuffer) {
+	void drawCSM(CommandBuffer *cb) {
 		/*
 			Generate depth map cascades
 
@@ -759,18 +751,18 @@ public:
 		renderPassBeginInfo.pClearValues = clearValues;
 
 		VkViewport viewport = vks::initializers::viewport((float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
-		vkCmdSetViewport(cmdBuffer, 0, 1, &viewport);
+		vkCmdSetViewport(cb->handle, 0, 1, &viewport);
 
 		VkRect2D scissor = vks::initializers::rect2D(SHADOWMAP_DIM, SHADOWMAP_DIM, 0, 0);
-		vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
+		vkCmdSetScissor(cb->handle, 0, 1, &scissor);
 
 		// One pass per cascade
 		// The layer that this pass renders to is defined by the cascade's image view (selected via the cascade's decsriptor set)
 		for (uint32_t j = 0; j < SHADOW_MAP_CASCADE_COUNT; j++) {
 			renderPassBeginInfo.framebuffer = cascades[j].frameBuffer;
-			vkCmdBeginRenderPass(cmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-			drawShadowCasters(cmdBuffer, j);
-			vkCmdEndRenderPass(cmdBuffer);
+			vkCmdBeginRenderPass(cb->handle, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+			drawShadowCasters(cb, j);
+			vkCmdEndRenderPass(cb->handle);
 		}
 	}
 
@@ -787,13 +779,14 @@ public:
 		VkRect2D scissor;
 		VkDeviceSize offsets[1] = { 0 };
 
-		for (int32_t i = 0; i < drawCmdBuffers.size(); i++) {
-			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufInfo));
+		for (int32_t i = 0; i < commandBuffers.size(); i++) {
+			CommandBuffer *cb = commandBuffers[i];
+			cb->begin();
 
 			/*
 				CSM
 			*/
-			drawCSM(drawCmdBuffers[i]);
+			drawCSM(cb);
 
 			/*
 				Render refraction
@@ -811,23 +804,15 @@ public:
 				renderPassBeginInfo.clearValueCount = 2;
 				renderPassBeginInfo.pClearValues = clearValues;
 
-				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-				VkViewport viewport = vks::initializers::viewport((float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
-				vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
-
-				VkRect2D scissor = vks::initializers::rect2D(offscreenPass.width, offscreenPass.height, 0, 0);
-				vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
-
-				VkDeviceSize offsets[1] = { 0 };
-
-				drawScene(drawCmdBuffers[i], SceneDrawType::sceneDrawTypeRefract);
-
-				vkCmdEndRenderPass(drawCmdBuffers[i]);
+				vkCmdBeginRenderPass(cb->handle, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
+				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
+				drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
+				vkCmdEndRenderPass(cb->handle);
 			}
 
 			/*
-				First pass: Render refraction
+				Render reflection
 			*/
 			{
 				VkClearValue clearValues[2];
@@ -842,19 +827,11 @@ public:
 				renderPassBeginInfo.clearValueCount = 2;
 				renderPassBeginInfo.pClearValues = clearValues;
 
-				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-				VkViewport viewport = vks::initializers::viewport((float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
-				vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
-
-				VkRect2D scissor = vks::initializers::rect2D(offscreenPass.width, offscreenPass.height, 0, 0);
-				vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
-
-				VkDeviceSize offsets[1] = { 0 };
-
-				drawScene(drawCmdBuffers[i], SceneDrawType::sceneDrawTypeReflect);
-
-				vkCmdEndRenderPass(drawCmdBuffers[i]);
+				vkCmdBeginRenderPass(cb->handle, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
+				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
+				drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
+				vkCmdEndRenderPass(cb->handle);
 			}
 
 			/*
@@ -872,48 +849,44 @@ public:
 				renderPassBeginInfo.clearValueCount = 2;
 				renderPassBeginInfo.pClearValues = clearValues;
 
-				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-				VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
-				vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
-
-				VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
-				vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
-
-				VkDeviceSize offsets[1] = { 0 };
-
-				// Scene
-
-				drawScene(drawCmdBuffers[i], SceneDrawType::sceneDrawTypeDisplay);
-
+				vkCmdBeginRenderPass(cb->handle, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+				cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
+				cb->setScissor(0, 0, width, height);			
+				drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
 				// Reflection plane
-				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured->handle, 0, 1, &descriptorSets.waterplane->handle, 0, nullptr);
-				pipelines.mirror->bind(drawCmdBuffers[i]);
-				models.plane.draw(drawCmdBuffers[i]);
+				cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
+				cb->bindPipeline(pipelines.mirror);
+				models.plane.draw(cb->handle);
 
-				if (debugDisplay)
-				{
-					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured->handle, 0, 1, &descriptorSets.debugquad->handle, 0, nullptr);
-					pipelines.debug->bind(drawCmdBuffers[i]);
-					vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &quad.vertices.buffer, offsets);
-					vkCmdBindIndexBuffer(drawCmdBuffers[i], quad.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-					vkCmdDrawIndexed(drawCmdBuffers[i], quad.indexCount, 1, 0, 0, 0);
+				if (debugDisplayReflection) {
+					uint32_t val0 = 0;
+					cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
+					cb->bindPipeline(pipelines.debug);
+					cb->updatePushConstant(pipelineLayouts.debug, 0, &val0);
+					cb->draw(6, 1, 0, 0);
+				}
+
+				if (debugDisplayRefraction) {
+					uint32_t val1 = 1;
+					cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
+					cb->bindPipeline(pipelines.debug);
+					cb->updatePushConstant(pipelineLayouts.debug, 0, &val1);
+					cb->draw(6, 1, 0, 0);
 				}
 
 				if (cascadeDebug.enabled) {
-					const CascadePushConstBlock pushConstBlock = { glm::vec4(0.0f), cascadeDebug.cascadeIndex };
-					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, cascadeDebug.pipelineLayout->handle, 0, 1, &cascadeDebug.descriptorSet->handle, 0, nullptr);
-					cascadeDebug.pipeline->bind(drawCmdBuffers[i]);
-					cascadeDebug.pipelineLayout->updatePushConstant(drawCmdBuffers[i], 0, &pushConstBlock);
-					vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
+					const CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeDebug.cascadeIndex };
+					cb->bindDescriptorSets(cascadeDebug.pipelineLayout, { cascadeDebug.descriptorSet }, 0);
+					cb->bindPipeline(cascadeDebug.pipeline);
+					cb->updatePushConstant(cascadeDebug.pipelineLayout, 0, &pushConst);
+					cb->draw(6, 1, 0, 0);
 				}
 
-				drawUI(drawCmdBuffers[i]);
+				drawUI(cb->handle);
 
-				vkCmdEndRenderPass(drawCmdBuffers[i]);
+				vkCmdEndRenderPass(cb->handle);
 			}
-
-			VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[i]));
+			cb->end();
 		}
 	}
 
@@ -921,6 +894,7 @@ public:
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
+		models.testscene.loadFromFile(getAssetPath() + "scenes/testscene.gltf", vulkanDevice, queue);
 				
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
@@ -979,20 +953,6 @@ public:
 #endif
 	}
 
-	void generateQuad()
-	{
-		std::vector<vkglTF::Model::Vertex> vertexBuffer = {
-			{ { 1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f } },
-			{ { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f } },
-			{ { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f } },
-			{ { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f } }
-		};
-		std::vector<uint32_t> indexBuffer = { 0,1,2, 2,3,0 };
-		quad.indexCount = indexBuffer.size();
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vertexBuffer.size() * sizeof(vkglTF::Model::Vertex), &quad.vertices.buffer, &quad.vertices.memory, vertexBuffer.data()));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, indexBuffer.size() * sizeof(uint32_t), &quad.indices.buffer, &quad.indices.memory, indexBuffer.data()));
-	}
-
 	void setupDescriptorPool()
 	{
 		// @todo
@@ -1020,6 +980,12 @@ public:
 		pipelineLayouts.textured->addLayout(descriptorSetLayouts.textured);
 		pipelineLayouts.textured->create();
 
+		// Debug
+		pipelineLayouts.debug = new PipelineLayout(device);
+		pipelineLayouts.debug->addLayout(descriptorSetLayouts.textured);
+		pipelineLayouts.debug->addPushConstantRange(sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		pipelineLayouts.debug->create();
+
 		// Terrain
 		descriptorSetLayouts.terrain = new DescriptorSetLayout(device);
 		descriptorSetLayouts.terrain->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1045,7 +1011,7 @@ public:
 		pipelineLayouts.sky->addPushConstantRange(sizeof(glm::mat4) + sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT);
 		pipelineLayouts.sky->create();
 
-		// Shadow map cascades
+		// Depth pass
 		depthPass.descriptorSetLayout = new DescriptorSetLayout(device);
 		depthPass.descriptorSetLayout->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT);
 		depthPass.descriptorSetLayout->create();
@@ -1054,6 +1020,7 @@ public:
 		depthPass.pipelineLayout->addLayout(depthPass.descriptorSetLayout);
 		depthPass.pipelineLayout->addPushConstantRange(sizeof(CascadePushConstBlock), 0, VK_SHADER_STAGE_VERTEX_BIT);
 		depthPass.pipelineLayout->create();
+
 		// Cascade debug
 		cascadeDebug.descriptorSetLayout = new DescriptorSetLayout(device);
 		cascadeDebug.descriptorSetLayout->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1063,6 +1030,7 @@ public:
 		cascadeDebug.pipelineLayout->addLayout(cascadeDebug.descriptorSetLayout);
 		cascadeDebug.pipelineLayout->addPushConstantRange(sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT);
 		cascadeDebug.pipelineLayout->create();
+
 	}
 
 	void setupDescriptorSet()
@@ -1085,8 +1053,8 @@ public:
 		descriptorSets.debugquad = new DescriptorSet(device);
 		descriptorSets.debugquad->setPool(descriptorPool);
 		descriptorSets.debugquad->addLayout(descriptorSetLayouts.textured);
-		descriptorSets.debugquad->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsDebugQuad.descriptor);
 		descriptorSets.debugquad->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.reflection.descriptor);
+		descriptorSets.debugquad->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.refraction.descriptor);
 		descriptorSets.debugquad->create();
 
 		// Terrain
@@ -1126,6 +1094,7 @@ public:
 		depthPass.descriptorSet->addLayout(depthPass.descriptorSetLayout);
 		depthPass.descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &depthPass.uniformBuffer.descriptor);
 		depthPass.descriptorSet->create();
+
 		// Cascade debug
 		cascadeDebug.descriptorSet = new DescriptorSet(device);
 		cascadeDebug.descriptorSet->setPool(descriptorPool);
@@ -1179,7 +1148,7 @@ public:
 		pipelines.debug = new Pipeline(device);
 		pipelines.debug->setCreateInfo(pipelineCI);
 		pipelines.debug->setCache(pipelineCache);
-		pipelines.debug->setLayout(pipelineLayouts.textured);
+		pipelines.debug->setLayout(pipelineLayouts.debug);
 		pipelines.debug->setRenderPass(renderPass);
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.vert.spv");
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.frag.spv");
@@ -1193,6 +1162,7 @@ public:
 		cascadeDebug.pipeline->addShader(getAssetPath() + "shaders/debug_csm.vert.spv");
 		cascadeDebug.pipeline->addShader(getAssetPath() + "shaders/debug_csm.frag.spv");
 		cascadeDebug.pipeline->create();
+
 		depthStencilState.depthTestEnable = VK_TRUE;
 
 		// Mirror
@@ -1348,7 +1318,7 @@ public:
 
 		// Command buffer to be sumitted to the queue
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
+		submitInfo.pCommandBuffers = &commandBuffers[currentBuffer]->handle;
 
 		// Submit to queue
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
@@ -1360,7 +1330,6 @@ public:
 	{
 		VulkanExampleBase::prepare();
 		loadAssets();
-		generateQuad();
 		generateTerrain();
 		prepareOffscreen();
 		prepareCSM();
@@ -1396,7 +1365,10 @@ public:
 	{
 		bool updateTerrain = false;
 		if (overlay->header("Debugging")) {
-			if (overlay->checkBox("Display render target", &debugDisplay)) {
+			if (overlay->checkBox("Display reflection", &debugDisplayReflection)) {
+				buildCommandBuffers();
+			}
+			if (overlay->checkBox("Display refraction", &debugDisplayRefraction)) {
 				buildCommandBuffers();
 			}
 			if (overlay->checkBox("Display cascades", &cascadeDebug.enabled)) {
