@@ -239,5 +239,11 @@ namespace vks
 			vkDestroyBuffer(device->logicalDevice, indexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, indexStaging.memory, nullptr);
 		}
+		void draw(VkCommandBuffer cb) {
+			const VkDeviceSize offsets[1] = { 0 };
+			vkCmdBindVertexBuffers(cb, 0, 1, &vertexBuffer.buffer, offsets);
+			vkCmdBindIndexBuffer(cb, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+			vkCmdDrawIndexed(cb, indexCount, 1, 0, 0, 0);
+		}
 	};
 }
