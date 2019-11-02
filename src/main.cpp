@@ -24,6 +24,8 @@
 #include "VulkanBuffer.hpp"
 #include "VulkanHeightmap.hpp"
 
+#include "Pipeline.hpp"
+
 #define ENABLE_VALIDATION false
 
 #define FB_DIM 1024
@@ -48,7 +50,15 @@ public:
 
 	glm::vec4 lightPos;
 
-	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay, sceneDrawShadowCascade };
+	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
+
+	struct {
+		Pipeline* debug;
+		Pipeline* mirror;
+		Pipeline* terrain;
+		Pipeline* sky;
+		Pipeline* depthpass;
+	} pipelines;
 
 	struct Quad {
 		uint32_t indexCount;
@@ -115,14 +125,6 @@ public:
 		VkPipelineLayout terrain;
 		VkPipelineLayout sky;
 	} pipelineLayouts;
-
-	struct {
-		VkPipeline debug;
-		VkPipeline shaded;
-		VkPipeline mirror;
-		VkPipeline terrain;
-		VkPipeline sky;
-	} pipelines;
 
 	struct {
 		VkDescriptorSet offscreen;
@@ -259,10 +261,6 @@ public:
 		vkDestroyRenderPass(device, offscreenPass.renderPass, nullptr);
 		vkDestroySampler(device, offscreenPass.sampler, nullptr);
 		//vkDestroyFramebuffer(device, offscreenPass.frameBuffer, nullptr);
-
-		vkDestroyPipeline(device, pipelines.debug, nullptr);
-		vkDestroyPipeline(device, pipelines.shaded, nullptr);
-		vkDestroyPipeline(device, pipelines.mirror, nullptr);
 
 		vkDestroyPipelineLayout(device, pipelineLayouts.textured, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayouts.shaded, nullptr);
@@ -462,7 +460,7 @@ public:
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &offscreenPass.reflection.frameBuffer));
 	}
 
-	void drawScene(VkCommandBuffer cmdBuffer, SceneDrawType drawType, uint32_t cascadeIndex = 0)
+	void drawScene(VkCommandBuffer cb, SceneDrawType drawType)
 	{
 		// @todo: rename to localMat
 		struct PushConst {
@@ -488,30 +486,30 @@ public:
 		const VkDeviceSize offsets[1] = { 0 };
 		
 		// Skysphere
-		if ((drawType != SceneDrawType::sceneDrawTypeRefract) && (drawType != SceneDrawType::sceneDrawShadowCascade)) {
-			vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.sky);
-			vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky, 0, 1, &descriptorSets.skysphere, 0, nullptr);
-			models.skysphere.draw(cmdBuffer);
+		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
+			pipelines.sky->bind(cb);
+			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.sky, 0, 1, &descriptorSets.skysphere, 0, nullptr);
+			models.skysphere.draw(cb);
 		}
 		
 		// Terrain
-		vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.terrain);
-		vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.terrain, 0, 1, &descriptorSets.terrain, 0, nullptr);
-		vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
-		vkCmdBindIndexBuffer(cmdBuffer, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-		vkCmdPushConstants(cmdBuffer, pipelineLayouts.terrain, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pushConst), &pushConst);
-		vkCmdDrawIndexed(cmdBuffer, heightMap->indexCount, 1, 0, 0, 0);
+		pipelines.terrain->bind(cb);
+		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.terrain, 0, 1, &descriptorSets.terrain, 0, nullptr);
+		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
+		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+		vkCmdPushConstants(cb, pipelineLayouts.terrain, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pushConst), &pushConst);
+		vkCmdDrawIndexed(cb, heightMap->indexCount, 1, 0, 0, 0);
 	}
 
-	void drawShadowCasters(VkCommandBuffer cmdBuffer, uint32_t cascadeIndex = 0) {
+	void drawShadowCasters(VkCommandBuffer cb, uint32_t cascadeIndex = 0) {
 		const VkDeviceSize offsets[1] = { 0 };
 		const CascadePushConstBlock pushConstBlock = { glm::vec4(0.0f), cascadeIndex };
-		vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipeline);
-		vkCmdPushConstants(cmdBuffer, depthPass.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(CascadePushConstBlock), &pushConstBlock);
-		vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout, 0, 1, &depthPass.descriptorSet, 0, nullptr);
-		vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
-		vkCmdBindIndexBuffer(cmdBuffer, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-		vkCmdDrawIndexed(cmdBuffer, heightMap->indexCount, 1, 0, 0, 0);
+		pipelines.depthpass->bind(cb);
+		vkCmdPushConstants(cb, depthPass.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(CascadePushConstBlock), &pushConstBlock);
+		vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPass.pipelineLayout, 0, 1, &depthPass.descriptorSet, 0, nullptr);
+		vkCmdBindVertexBuffers(cb, 0, 1, &heightMap->vertexBuffer.buffer, offsets);
+		vkCmdBindIndexBuffer(cb, heightMap->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+		vkCmdDrawIndexed(cb, heightMap->indexCount, 1, 0, 0, 0);
 	}
 
 	/*
@@ -888,13 +886,13 @@ public:
 
 				// Reflection plane
 				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.mirror, 0, nullptr);
-				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.mirror);
+				pipelines.mirror->bind(drawCmdBuffers[i]);
 				models.plane.draw(drawCmdBuffers[i]);
 
 				if (debugDisplay)
 				{
 					vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.textured, 0, 1, &descriptorSets.debugQuad, 0, nullptr);
-					vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.debug);
+					pipelines.debug->bind(drawCmdBuffers[i]);
 					vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &quad.vertices.buffer, offsets);
 					vkCmdBindIndexBuffer(drawCmdBuffers[i], quad.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
 					vkCmdDrawIndexed(drawCmdBuffers[i], quad.indexCount, 1, 0, 0, 0);
@@ -1181,9 +1179,6 @@ public:
 		// Load shaders
 		std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
 
-		shaderStages[0] = loadShader(getAssetPath() + "shaders/quad.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getAssetPath() + "shaders/quad.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
-
 		// Vertex bindings and attributes
 		const std::vector<VkVertexInputBindingDescription> vertexInputBindings = {
 			vks::initializers::vertexInputBindingDescription(0, sizeof(vkglTF::Model::Vertex), VK_VERTEX_INPUT_RATE_VERTEX),
@@ -1214,44 +1209,43 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelineCI.layout = pipelineLayouts.textured;
 		depthStencilState.depthTestEnable = VK_FALSE;
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.debug));
+		pipelines.debug = new Pipeline(device);
+		pipelines.debug->addShader(getAssetPath() + "shaders/quad.vert.spv");
+		pipelines.debug->addShader(getAssetPath() + "shaders/quad.frag.spv");
+		pipelines.debug->create(pipelineCI, pipelineCache);
 		depthStencilState.depthTestEnable = VK_TRUE;
 
 		// Mirror
-		shaderStages[0] = loadShader(getAssetPath() + "shaders/mirror.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getAssetPath() + "shaders/mirror.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.mirror));
+		pipelines.mirror = new Pipeline(device);
+		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.vert.spv");
+		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.frag.spv");
+		pipelines.mirror->create(pipelineCI, pipelineCache);
 
 		// Flip culling
 		//rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 
-		// Phong shading pipelines
-		pipelineCI.layout = pipelineLayouts.shaded;
-		// Scene
-		shaderStages[0] = loadShader(getAssetPath() + "shaders/phong.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getAssetPath() + "shaders/phong.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.shaded));
-
 		// Terrain
 		pipelineCI.layout = pipelineLayouts.terrain;
-		shaderStages[0] = loadShader(getAssetPath() + "shaders/terrain.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getAssetPath() + "shaders/terrain.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.terrain));
+		pipelines.terrain = new Pipeline(device);
+		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.vert.spv");
+		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.frag.spv");
+		pipelines.terrain->create(pipelineCI, pipelineCache);
+
 		// Sky
 		pipelineCI.layout = pipelineLayouts.sky;
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthWriteEnable = VK_FALSE;
-		shaderStages[0] = loadShader(getAssetPath() + "shaders/skysphere.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getAssetPath() + "shaders/skysphere.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.sky));
+		pipelines.sky = new Pipeline(device);
+		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.vert.spv");
+		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
+		pipelines.sky->create(pipelineCI, pipelineCache);
+
 		depthStencilState.depthWriteEnable = VK_TRUE;
 
 		/*
 			CSM
 		*/
-		shaderStages[0] = loadShader(getAssetPath() + "shaders/depthpass.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getAssetPath() + "shaders/terrain_depthpass.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 		// No blend attachment states (no color attachments used)
 		colorBlendState.attachmentCount = 0;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
@@ -1259,7 +1253,10 @@ public:
 		rasterizationState.depthClampEnable = deviceFeatures.depthClamp;
 		pipelineCI.layout = depthPass.pipelineLayout;
 		pipelineCI.renderPass = depthPass.renderPass;
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &depthPass.pipeline));
+		pipelines.depthpass = new Pipeline(device);
+		pipelines.depthpass->addShader(getAssetPath() + "shaders/depthpass.vert.spv");
+		pipelines.depthpass->addShader(getAssetPath() + "shaders/terrain_depthpass.frag.spv");
+		pipelines.depthpass->create(pipelineCI, pipelineCache);
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
