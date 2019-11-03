@@ -28,6 +28,7 @@
 #include "PipelineLayout.hpp"
 #include "DescriptorSet.hpp"
 #include "DescriptorSetLayout.hpp"
+#include "DescriptorPool.hpp"
 
 #define ENABLE_VALIDATION false
 
@@ -132,6 +133,8 @@ public:
 		PipelineLayout* terrain;
 		PipelineLayout* sky;
 	} pipelineLayouts;
+
+	DescriptorPool* descriptorPool;
 
 	struct DescriptorSets {
 		DescriptorSet* waterplane;
@@ -945,13 +948,12 @@ public:
 
 	void setupDescriptorPool()
 	{
-		// @todo
-		std::vector<VkDescriptorPoolSize> poolSizes = {
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 6 * 25),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8 * 25)
-		};
-		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo( poolSizes.size(), poolSizes.data(), 5 * 10);
-		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
+		// @todo: proper sizes
+		descriptorPool = new DescriptorPool(device);
+		descriptorPool->setMaxSets(16);
+		descriptorPool->addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 32);
+		descriptorPool->addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32);
+		descriptorPool->create();
 	}
 
 	void setupDescriptorSetLayout()

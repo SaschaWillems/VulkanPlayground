@@ -13,11 +13,12 @@
 #include "VulkanInitializers.hpp"
 #include "VulkanTools.h"
 #include "DescriptorSetLayout.hpp"
+#include "DescriptorPool.hpp"
 
 class DescriptorSet {
 private:
 	VkDevice device = VK_NULL_HANDLE;
-	VkDescriptorPool pool = VK_NULL_HANDLE;
+	DescriptorPool *pool = nullptr;
 	std::vector<VkDescriptorSetLayout> layouts;
 	std::vector<VkWriteDescriptorSet> descriptors;
 public:
@@ -29,7 +30,7 @@ public:
 		// @todo
 	}
 	void create() {
-		VkDescriptorSetAllocateInfo descriptorSetAI = vks::initializers::descriptorSetAllocateInfo(pool, layouts.data(), static_cast<uint32_t>(layouts.size()));
+		VkDescriptorSetAllocateInfo descriptorSetAI = vks::initializers::descriptorSetAllocateInfo(pool->handle, layouts.data(), static_cast<uint32_t>(layouts.size()));
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAI, &handle));
 		for (auto& descriptor : descriptors) {
 			descriptor.dstSet = handle;
@@ -39,7 +40,7 @@ public:
 	operator VkDescriptorSet() const { 
 		return handle; 
 	}
-	void setPool(VkDescriptorPool pool) {
+	void setPool(DescriptorPool *pool) {
 		this->pool = pool;
 	}
 	void addLayout(VkDescriptorSetLayout layout) {
