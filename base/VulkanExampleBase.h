@@ -55,6 +55,7 @@
 #include "benchmark.hpp"
 
 #include "CommandBuffer.hpp"
+#include "CommandPool.hpp"
 
 class VulkanExampleBase
 {
@@ -98,13 +99,11 @@ protected:
 	VkQueue queue;
 	// Depth buffer format (selected during Vulkan initialization)
 	VkFormat depthFormat;
-	// Command buffer pool
-	VkCommandPool cmdPool;
 	/** @brief Pipeline stages used to wait at for graphics queue submissions */
 	VkPipelineStageFlags submitPipelineStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	// Contains command buffers and semaphores to be presented to the queue
 	VkSubmitInfo submitInfo;
-	// Command buffers used for rendering
+	CommandPool* commandPool;
 	std::vector<CommandBuffer*> commandBuffers;
 	// Global render pass for frame buffer writes
 	VkRenderPass renderPass;

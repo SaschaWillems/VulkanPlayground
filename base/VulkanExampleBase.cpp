@@ -120,7 +120,7 @@ void VulkanExampleBase::createCommandBuffers()
 	commandBuffers.resize(swapChain.imageCount);
 	for (auto &commandBuffer : commandBuffers) {
 		commandBuffer = new CommandBuffer(device);
-		commandBuffer->setPool(cmdPool);
+		commandBuffer->setPool(commandPool);
 		commandBuffer->create();
 	}
 }
@@ -139,7 +139,7 @@ VkCommandBuffer VulkanExampleBase::createCommandBuffer(VkCommandBufferLevel leve
 
 	VkCommandBufferAllocateInfo cmdBufAllocateInfo =
 		vks::initializers::commandBufferAllocateInfo(
-			cmdPool,
+			commandPool->handle,
 			level,
 			1);
 
@@ -175,7 +175,7 @@ void VulkanExampleBase::flushCommandBuffer(VkCommandBuffer commandBuffer, VkQueu
 
 	if (free)
 	{
-		vkFreeCommandBuffers(device, cmdPool, 1, &commandBuffer);
+		vkFreeCommandBuffers(device, commandPool->handle, 1, &commandBuffer);
 	}
 }
 
@@ -785,8 +785,6 @@ VulkanExampleBase::~VulkanExampleBase()
 	vkFreeMemory(device, depthStencil.mem, nullptr);
 
 	vkDestroyPipelineCache(device, pipelineCache, nullptr);
-
-	vkDestroyCommandPool(device, cmdPool, nullptr);
 
 	vkDestroySemaphore(device, semaphores.presentComplete, nullptr);
 	vkDestroySemaphore(device, semaphores.renderComplete, nullptr);
@@ -2006,11 +2004,10 @@ void VulkanExampleBase::createSynchronizationPrimitives()
 
 void VulkanExampleBase::createCommandPool()
 {
-	VkCommandPoolCreateInfo cmdPoolInfo = {};
-	cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-	cmdPoolInfo.queueFamilyIndex = swapChain.queueNodeIndex;
-	cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-	VK_CHECK_RESULT(vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &cmdPool));
+	commandPool = new CommandPool(device);
+	commandPool->setFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+	commandPool->setQueueFamilyIndex(swapChain.queueNodeIndex);
+	commandPool->create();
 }
 
 void VulkanExampleBase::setupDepthStencil()

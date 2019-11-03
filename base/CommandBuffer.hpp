@@ -14,11 +14,12 @@
 #include "DescriptorSet.hpp"
 #include "Pipeline.hpp"
 #include "PipelineLayout.hpp"
+#include "CommandPool.hpp"
 
 class CommandBuffer {
 private:
 	VkDevice device;
-	VkCommandPool pool = VK_NULL_HANDLE;
+	CommandPool *pool = nullptr;
 	VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 public:
 	VkCommandBuffer handle;
@@ -26,14 +27,14 @@ public:
 		this->device = device;
 	}
 	~CommandBuffer() {
-		vkFreeCommandBuffers(device, pool, 1, &handle);
+		vkFreeCommandBuffers(device, pool->handle, 1, &handle);
 	}
 	void create() {
 		assert(pool);
-		VkCommandBufferAllocateInfo AI = vks::initializers::commandBufferAllocateInfo(pool, level, 1);
+		VkCommandBufferAllocateInfo AI = vks::initializers::commandBufferAllocateInfo(pool->handle, level, 1);
 		VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &AI, &handle));
 	}
-	void setPool(VkCommandPool pool) {
+	void setPool(CommandPool* pool) {
 		this->pool = pool;
 	}
 	void setLevel(VkCommandBufferLevel level) {
