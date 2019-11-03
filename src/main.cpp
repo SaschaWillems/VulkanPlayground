@@ -750,12 +750,8 @@ public:
 		renderPassBeginInfo.clearValueCount = 1;
 		renderPassBeginInfo.pClearValues = clearValues;
 
-		VkViewport viewport = vks::initializers::viewport((float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
-		vkCmdSetViewport(cb->handle, 0, 1, &viewport);
-
-		VkRect2D scissor = vks::initializers::rect2D(SHADOWMAP_DIM, SHADOWMAP_DIM, 0, 0);
-		vkCmdSetScissor(cb->handle, 0, 1, &scissor);
-
+		cb->setViewport(0, 0, (float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
+		cb->setScissor(0, 0, SHADOWMAP_DIM, SHADOWMAP_DIM);
 		// One pass per cascade
 		// The layer that this pass renders to is defined by the cascade's image view (selected via the cascade's decsriptor set)
 		for (uint32_t j = 0; j < SHADOW_MAP_CASCADE_COUNT; j++) {
@@ -772,13 +768,6 @@ public:
 
 	void buildCommandBuffers()
 	{
-		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
-
-		VkClearValue clearValues[2];
-		VkViewport viewport;
-		VkRect2D scissor;
-		VkDeviceSize offsets[1] = { 0 };
-
 		for (int32_t i = 0; i < commandBuffers.size(); i++) {
 			CommandBuffer *cb = commandBuffers[i];
 			cb->begin();
@@ -838,6 +827,7 @@ public:
 				Scene rendering with reflection, refraction and shadows
 			*/
 			{
+				VkClearValue clearValues[2];
 				clearValues[0].color = defaultClearColor;
 				clearValues[1].depthStencil = { 1.0f, 0 };
 
