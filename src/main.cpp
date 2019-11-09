@@ -29,6 +29,8 @@
 #include "DescriptorSet.hpp"
 #include "DescriptorSetLayout.hpp"
 #include "DescriptorPool.hpp"
+#include "Image.hpp"
+#include "ImageView.hpp"
 
 #define ENABLE_VALIDATION false
 
@@ -55,6 +57,7 @@ public:
 	glm::vec4 lightPos;
 
 	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
+	enum class FramebufferType { Color, DepthStencil };
 
 	struct CascadeDebug {
 		bool enabled = false;
@@ -151,10 +154,9 @@ public:
 
 	// Framebuffer for offscreen rendering
 	struct FrameBufferAttachment {
-		VkFramebuffer frameBuffer;		
-		VkDeviceMemory mem;
-		VkImage image;
-		VkImageView view;
+		VkFramebuffer frameBuffer;
+		ImageView* view;
+		Image* image;
 		VkDescriptorImageInfo descriptor;
 	};
 	struct OffscreenPass {
@@ -189,14 +191,10 @@ public:
 	} depthPass;
 	// Layered depth image containing the shadow cascade depths
 	struct DepthImage {
-		VkImage image;
-		VkDeviceMemory mem;
-		VkImageView view;
+		Image* image;
+		ImageView* view;
 		VkSampler sampler;
 		void destroy(VkDevice device) {
-			vkDestroyImageView(device, view, nullptr);
-			vkDestroyImage(device, image, nullptr);
-			vkFreeMemory(device, mem, nullptr);
 			vkDestroySampler(device, sampler, nullptr);
 		}
 	} depth;
@@ -205,11 +203,10 @@ public:
 	struct Cascade {
 		VkFramebuffer frameBuffer;
 		DescriptorSet* descriptorSet;
-		VkImageView view;
+		ImageView* view;
 		float splitDepth;
 		glm::mat4 viewProjMatrix;
 		void destroy(VkDevice device) {
-			vkDestroyImageView(device, view, nullptr);
 			vkDestroyFramebuffer(device, frameBuffer, nullptr);
 		}
 		VkDescriptorImageInfo descriptor;
@@ -259,15 +256,6 @@ public:
 
 		// Frame buffer
 
-		// Color attachment
-		vkDestroyImageView(device, offscreenPass.refraction.view, nullptr);
-		vkDestroyImage(device, offscreenPass.refraction.image, nullptr);
-		vkFreeMemory(device, offscreenPass.refraction.mem, nullptr);
-
-		// Depth attachment
-		vkDestroyImageView(device, offscreenPass.depth.view, nullptr);
-		vkDestroyImage(device, offscreenPass.depth.image, nullptr);
-		vkFreeMemory(device, offscreenPass.depth.mem, nullptr);
 
 		vkDestroyRenderPass(device, offscreenPass.renderPass, nullptr);
 		vkDestroySampler(device, offscreenPass.sampler, nullptr);
@@ -280,42 +268,41 @@ public:
 		uniformBuffers.vsDebugQuad.destroy();
 	}
 
-	void createFrameBuffer(FrameBufferAttachment& target)
+	void createFrameBufferImage(FrameBufferAttachment& target, FramebufferType type)
 	{
-		VkImageCreateInfo image = vks::initializers::imageCreateInfo();
-		image.imageType = VK_IMAGE_TYPE_2D;
-		image.format = swapChain.colorFormat;
-		image.extent.width = offscreenPass.width;
-		image.extent.height = offscreenPass.height;
-		image.extent.depth = 1;
-		image.mipLevels = 1;
-		image.arrayLayers = 1;
-		image.samples = VK_SAMPLE_COUNT_1_BIT;
-		image.tiling = VK_IMAGE_TILING_OPTIMAL;
-		image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-		VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &target.image));
+		VkFormat format = VK_FORMAT_UNDEFINED;
+		VkImageAspectFlags aspectMask;
+		VkImageUsageFlags usageFlags;
+		switch (type) {
+		case FramebufferType::Color:
+			format = swapChain.colorFormat;
+			usageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+			aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			break;
+		case FramebufferType::DepthStencil:
+			VkBool32 validDepthFormat = vks::tools::getSupportedDepthFormat(physicalDevice, &format);
+			usageFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+			aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+			break;
+		}
+		assert(format != VK_FORMAT_UNDEFINED);
 
-		VkMemoryRequirements memReqs;
-		vkGetImageMemoryRequirements(device, target.image, &memReqs);
-		VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
-		memAlloc.allocationSize = memReqs.size;
-		memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &target.mem));
-		VK_CHECK_RESULT(vkBindImageMemory(device, target.image, target.mem, 0));
+		target.image = new Image(vulkanDevice);
+		target.image->setType(VK_IMAGE_TYPE_2D);
+		target.image->setFormat(format);
+		target.image->setExtent({ (uint32_t)offscreenPass.width, (uint32_t)offscreenPass.height, 1 });
+		target.image->setTiling(VK_IMAGE_TILING_OPTIMAL);
+		target.image->setUsage(usageFlags);
+		target.image->create();
 
-		VkImageViewCreateInfo colorImageView = vks::initializers::imageViewCreateInfo();
-		colorImageView.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		colorImageView.format = swapChain.colorFormat;
-		colorImageView.subresourceRange = {};
-		colorImageView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		colorImageView.subresourceRange.baseMipLevel = 0;
-		colorImageView.subresourceRange.levelCount = 1;
-		colorImageView.subresourceRange.baseArrayLayer = 0;
-		colorImageView.subresourceRange.layerCount = 1;
-		colorImageView.image = target.image;
-		VK_CHECK_RESULT(vkCreateImageView(device, &colorImageView, nullptr, &target.view));
+		target.view = new ImageView(vulkanDevice);
+		target.view->setType(VK_IMAGE_VIEW_TYPE_2D);
+		target.view->setFormat(format);
+		target.view->setSubResourceRange({ aspectMask, 0, 1, 0, 1});
+		target.view->setImage(target.image);
+		target.view->create();
 
-		target.descriptor = { offscreenPass.sampler, target.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+		target.descriptor = { offscreenPass.sampler, target.view->handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	}
 
 	// Setup the offscreen framebuffer for rendering the mirrored scene
@@ -406,51 +393,17 @@ public:
 		samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
 		VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &offscreenPass.sampler));
 
-		/* Color frame buffers */
+		/* Framebuffer images */
 
-		createFrameBuffer(offscreenPass.refraction);
-		createFrameBuffer(offscreenPass.reflection);
-
-		// Depth stencil attachment
-		VkImageCreateInfo image = vks::initializers::imageCreateInfo();
-		image.imageType = VK_IMAGE_TYPE_2D;
-		image.format = fbDepthFormat;
-		image.extent.width = offscreenPass.width;
-		image.extent.height = offscreenPass.height;
-		image.extent.depth = 1;
-		image.mipLevels = 1;
-		image.arrayLayers = 1;
-		image.samples = VK_SAMPLE_COUNT_1_BIT;
-		image.tiling = VK_IMAGE_TILING_OPTIMAL;
-		image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-		VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &offscreenPass.depth.image));
-
-		VkMemoryRequirements memReqs;
-		vkGetImageMemoryRequirements(device, offscreenPass.depth.image, &memReqs);
-		VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
-		memAlloc.allocationSize = memReqs.size;
-		memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &offscreenPass.depth.mem));
-		VK_CHECK_RESULT(vkBindImageMemory(device, offscreenPass.depth.image, offscreenPass.depth.mem, 0));
-
-		VkImageViewCreateInfo depthStencilView = vks::initializers::imageViewCreateInfo();
-		depthStencilView.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		depthStencilView.format = fbDepthFormat;
-		depthStencilView.flags = 0;
-		depthStencilView.subresourceRange = {};
-		depthStencilView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-		depthStencilView.subresourceRange.baseMipLevel = 0;
-		depthStencilView.subresourceRange.levelCount = 1;
-		depthStencilView.subresourceRange.baseArrayLayer = 0;
-		depthStencilView.subresourceRange.layerCount = 1;
-		depthStencilView.image = offscreenPass.depth.image;
-		VK_CHECK_RESULT(vkCreateImageView(device, &depthStencilView, nullptr, &offscreenPass.depth.view));
+		createFrameBufferImage(offscreenPass.refraction, FramebufferType::Color);
+		createFrameBufferImage(offscreenPass.reflection, FramebufferType::Color);
+		createFrameBufferImage(offscreenPass.depth, FramebufferType::DepthStencil);
 
 		/* Framebuffers */
 
 		VkImageView attachments[2];
-		attachments[0] = offscreenPass.refraction.view;
-		attachments[1] = offscreenPass.depth.view;
+		attachments[0] = offscreenPass.refraction.view->handle;
+		attachments[1] = offscreenPass.depth.view->handle;
 
 		VkFramebufferCreateInfo frameBufferCI = vks::initializers::framebufferCreateInfo();
 		frameBufferCI.renderPass = offscreenPass.renderPass;
@@ -461,7 +414,7 @@ public:
 		frameBufferCI.layers = 1;
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &offscreenPass.refraction.frameBuffer));
 
-		attachments[0] = offscreenPass.reflection.view;
+		attachments[0] = offscreenPass.reflection.view->handle;
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &offscreenPass.reflection.frameBuffer));
 	}
 
@@ -573,59 +526,37 @@ public:
 		/*
 			Layered depth image and views
 		*/
+		depth.image = new Image(vulkanDevice);
+		depth.image->setType(VK_IMAGE_TYPE_2D);
+		depth.image->setFormat(depthFormat);
+		depth.image->setExtent({ SHADOWMAP_DIM, SHADOWMAP_DIM, 1 });
+		depth.image->setNumArrayLayers(SHADOW_MAP_CASCADE_COUNT);
+		depth.image->setUsage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		depth.image->setTiling(VK_IMAGE_TILING_OPTIMAL);
+		depth.image->create();
 
-		VkImageCreateInfo imageInfo = vks::initializers::imageCreateInfo();
-		imageInfo.imageType = VK_IMAGE_TYPE_2D;
-		imageInfo.extent.width = SHADOWMAP_DIM;
-		imageInfo.extent.height = SHADOWMAP_DIM;
-		imageInfo.extent.depth = 1;
-		imageInfo.mipLevels = 1;
-		imageInfo.arrayLayers = SHADOW_MAP_CASCADE_COUNT;
-		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-		imageInfo.format = depthFormat;
-		imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-		VK_CHECK_RESULT(vkCreateImage(device, &imageInfo, nullptr, &depth.image));
-		VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
-		VkMemoryRequirements memReqs;
-		vkGetImageMemoryRequirements(device, depth.image, &memReqs);
-		memAlloc.allocationSize = memReqs.size;
-		memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &depth.mem));
-		VK_CHECK_RESULT(vkBindImageMemory(device, depth.image, depth.mem, 0));
 		// Full depth map view (all layers)
-		VkImageViewCreateInfo viewInfo = vks::initializers::imageViewCreateInfo();
-		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-		viewInfo.format = depthFormat;
-		viewInfo.subresourceRange = {};
-		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-		viewInfo.subresourceRange.baseMipLevel = 0;
-		viewInfo.subresourceRange.levelCount = 1;
-		viewInfo.subresourceRange.baseArrayLayer = 0;
-		viewInfo.subresourceRange.layerCount = SHADOW_MAP_CASCADE_COUNT;
-		viewInfo.image = depth.image;
-		VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, &depth.view));
+		depth.view = new ImageView(vulkanDevice);
+		depth.view->setImage(depth.image);
+		depth.view->setType(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+		depth.view->setFormat(depthFormat);
+		depth.view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, SHADOW_MAP_CASCADE_COUNT });
+		depth.view->create();
 
 		// One image and framebuffer per cascade
 		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
-			// Image view for this cascade's layer (inside the depth map)
-			// This view is used to render to that specific depth image layer
-			VkImageViewCreateInfo viewInfo = vks::initializers::imageViewCreateInfo();
-			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-			viewInfo.format = depthFormat;
-			viewInfo.subresourceRange = {};
-			viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-			viewInfo.subresourceRange.baseMipLevel = 0;
-			viewInfo.subresourceRange.levelCount = 1;
-			viewInfo.subresourceRange.baseArrayLayer = i;
-			viewInfo.subresourceRange.layerCount = 1;
-			viewInfo.image = depth.image;
-			VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, &cascades[i].view));
+			// Image view for this cascade's layer (inside the depth map) this view is used to render to that specific depth image layer
+			cascades[i].view = new ImageView(vulkanDevice);
+			cascades[i].view->setImage(depth.image);
+			cascades[i].view->setType(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+			cascades[i].view->setFormat(depthFormat);
+			cascades[i].view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, i, 1 });
+			cascades[i].view->create();
 			// Framebuffer
 			VkFramebufferCreateInfo framebufferInfo = vks::initializers::framebufferCreateInfo();
 			framebufferInfo.renderPass = depthPass.renderPass;
 			framebufferInfo.attachmentCount = 1;
-			framebufferInfo.pAttachments = &cascades[i].view;
+			framebufferInfo.pAttachments = &cascades[i].view->handle;
 			framebufferInfo.width = SHADOWMAP_DIM;
 			framebufferInfo.height = SHADOWMAP_DIM;
 			framebufferInfo.layers = 1;
@@ -1027,7 +958,7 @@ public:
 
 	void setupDescriptorSet()
 	{
-		VkDescriptorImageInfo depthMapDescriptor = vks::initializers::descriptorImageInfo(depth.sampler, depth.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+		VkDescriptorImageInfo depthMapDescriptor = vks::initializers::descriptorImageInfo(depth.sampler, depth.view->handle, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
 		// Water plane
 		descriptorSets.waterplane = new DescriptorSet(device);
@@ -1071,7 +1002,7 @@ public:
 		// Shadow map cascades (one set per cascade)
 		// @todo: Doesn't make sense, all refer to same depth
 		for (auto i = 0; i < cascades.size(); i++) {
-			VkDescriptorImageInfo cascadeImageInfo = vks::initializers::descriptorImageInfo(depth.sampler, depth.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+			VkDescriptorImageInfo cascadeImageInfo = vks::initializers::descriptorImageInfo(depth.sampler, depth.view->handle, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 			cascades[i].descriptorSet = new DescriptorSet(device);
 			cascades[i].descriptorSet->setPool(descriptorPool);
 			cascades[i].descriptorSet->addLayout(descriptorSetLayouts.textured);
