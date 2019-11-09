@@ -15,6 +15,7 @@
 #include "Pipeline.hpp"
 #include "PipelineLayout.hpp"
 #include "CommandPool.hpp"
+#include "RenderPass.hpp"
 
 class CommandBuffer {
 private:
@@ -46,6 +47,13 @@ public:
 	}
 	void end() {
 		VK_CHECK_RESULT(vkEndCommandBuffer(handle));
+	}
+	void beginRenderPass(RenderPass *rp) {
+		VkRenderPassBeginInfo beginInfo = rp->getBeginInfo();
+		vkCmdBeginRenderPass(handle, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
+	}
+	void endRenderPass() {
+		vkCmdEndRenderPass(handle);
 	}
 	void setViewport(float x, float y, float width, float height, float minDepth, float maxDepth) {
 		VkViewport viewport = { x, y, width, height, minDepth, maxDepth };
