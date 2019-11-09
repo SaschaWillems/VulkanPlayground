@@ -184,7 +184,7 @@ public:
 		PipelineLayout* pipelineLayout;
 		VkPipeline pipeline;
 		vks::Buffer uniformBuffer;
-		DescriptorSetLayout *descriptorSetLayout;
+		DescriptorSetLayout* descriptorSetLayout;
 		DescriptorSet* descriptorSet;
 		struct UniformBlock {
 			std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMat;
@@ -232,7 +232,7 @@ public:
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;
 		enabledFeatures.samplerAnisotropy = VK_TRUE;
-		enabledFeatures.depthClamp = VK_TRUE;	
+		enabledFeatures.depthClamp = VK_TRUE;
 
 		// @todo
 		float radius = 20.0f;
@@ -370,8 +370,6 @@ public:
 		offscreenPass.renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
 		offscreenPass.renderPass->setDepthStencilClearValue(1, 1.0f, 0.0f);
 		offscreenPass.renderPass->create();
-
-		/* �LD */
 
 		offscreenPass.width = FB_DIM;
 		offscreenPass.height = FB_DIM;
@@ -731,19 +729,7 @@ public:
 				Scene rendering with reflection, refraction and shadows
 			*/
 			{
-				VkClearValue clearValues[2];
-				clearValues[0].color = defaultClearColor;
-				clearValues[1].depthStencil = { 1.0f, 0 };
-
-				VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
-				renderPassBeginInfo.renderPass = renderPass;
-				renderPassBeginInfo.framebuffer = frameBuffers[i];
-				renderPassBeginInfo.renderArea.extent.width = width;
-				renderPassBeginInfo.renderArea.extent.height = height;
-				renderPassBeginInfo.clearValueCount = 2;
-				renderPassBeginInfo.pClearValues = clearValues;
-
-				vkCmdBeginRenderPass(cb->handle, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+				cb->beginRenderPass(renderPass, frameBuffers[i]);
 				cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
 				cb->setScissor(0, 0, width, height);			
 				drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
@@ -778,7 +764,7 @@ public:
 
 				drawUI(cb->handle);
 
-				vkCmdEndRenderPass(cb->handle);
+				cb->endRenderPass();
 			}
 			cb->end();
 		}
@@ -1102,7 +1088,7 @@ public:
 		pipelines.depthpass->setCreateInfo(pipelineCI);
 		pipelines.depthpass->setCache(pipelineCache);
 		pipelines.depthpass->setLayout(depthPass.pipelineLayout);
-		pipelines.depthpass->setRenderPass(depthPass.renderPass->handle);
+		pipelines.depthpass->setRenderPass(depthPass.renderPass);
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/depthpass.vert.spv");
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/terrain_depthpass.frag.spv");
 		pipelines.depthpass->create();

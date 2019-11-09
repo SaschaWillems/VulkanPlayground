@@ -13,6 +13,7 @@
 #include "VulkanInitializers.hpp"
 #include "VulkanTools.h"
 #include "PipelineLayout.hpp"
+#include "RenderPass.hpp"
 
 class Pipeline {
 private:
@@ -20,7 +21,7 @@ private:
 	VkPipeline pso = VK_NULL_HANDLE;
 	VkPipelineBindPoint bindPoint;
 	PipelineLayout* layout = nullptr;
-	VkRenderPass renderPass;
+	RenderPass* renderPass;
 	VkGraphicsPipelineCreateInfo pipelineCI;
 	VkPipelineCache cache;
 	std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
@@ -38,7 +39,7 @@ public:
 		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCI.pStages = shaderStages.data();
 		pipelineCI.layout = layout->handle;
-		pipelineCI.renderPass = renderPass;
+		pipelineCI.renderPass = renderPass->handle;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, cache, 1, &pipelineCI, nullptr, &pso));
 	}
 	void addShader(std::string filename) {
@@ -67,7 +68,7 @@ public:
 	void setLayout(PipelineLayout* layout) {
 		this->layout = layout;
 	}
-	void setRenderPass(VkRenderPass renderPass) {
+	void setRenderPass(RenderPass* renderPass) {
 		this->renderPass = renderPass;
 	}
 	void setCreateInfo(VkGraphicsPipelineCreateInfo pipelineCI) {

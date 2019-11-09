@@ -56,6 +56,7 @@
 
 #include "CommandBuffer.hpp"
 #include "CommandPool.hpp"
+#include "RenderPass.hpp"
 
 class VulkanExampleBase
 {
@@ -105,8 +106,7 @@ protected:
 	VkSubmitInfo submitInfo;
 	CommandPool* commandPool;
 	std::vector<CommandBuffer*> commandBuffers;
-	// Global render pass for frame buffer writes
-	VkRenderPass renderPass;
+	RenderPass* renderPass;
 	// List of available frame buffers (same as number of swap chain images)
 	std::vector<VkFramebuffer>frameBuffers;
 	// Active frame buffer index
