@@ -16,6 +16,7 @@
 #include "PipelineLayout.hpp"
 #include "CommandPool.hpp"
 #include "RenderPass.hpp"
+#include "Framebuffer.hpp"
 
 class CommandBuffer {
 private:
@@ -48,7 +49,8 @@ public:
 	void end() {
 		VK_CHECK_RESULT(vkEndCommandBuffer(handle));
 	}
-	void beginRenderPass(RenderPass *rp) {
+	void beginRenderPass(RenderPass *rp, VkFramebuffer fb) {
+		rp->setFrameBuffer(fb);
 		VkRenderPassBeginInfo beginInfo = rp->getBeginInfo();
 		vkCmdBeginRenderPass(handle, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
 	}
