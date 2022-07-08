@@ -3,6 +3,8 @@
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec3 inNormal;
 layout (location = 2) in vec2 inUV;
+layout (location = 3) in vec3 inColor;
+layout (location = 4) in float inTerrainHeight;
 
 layout (set = 0, binding = 0) uniform UBO 
 {
@@ -18,27 +20,36 @@ layout (location = 3) out vec3 outLightVec;
 layout (location = 4) out vec3 outEyePos;
 layout (location = 5) out vec3 outViewPos;
 layout (location = 6) out vec3 outPos;
+layout (location = 7) flat out vec3 outColor;
+layout (location = 8) out float outTerrainHeight;
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
 	vec4 clipPlane;
 	uint shadows;
+	layout(offset = 96) vec3 pos;
 } pushConsts;
 
 void main(void)
 {
 	outUV = inUV;
+//	outUV.t = 1.0 - outUV.t;
+	outColor = inColor;
 	outNormal = inNormal;
 	vec4 pos = vec4(inPos, 1.0);
+	pos.xyz += pushConsts.pos;
 	if (pushConsts.scale[1][1] < 0) {
 		pos.y *= -1.0f;
 	}
+	// @todo
+//	pos.y = 0.0;
 	gl_Position = ubo.projection * ubo.modelview * pos;
 	outPos = pos.xyz;
 	outViewVec = -pos.xyz;
 	outLightVec = normalize(ubo.lightDir.xyz + outViewVec);
 	outEyePos = vec3(ubo.modelview * pos);
 	outViewPos = (ubo.modelview * vec4(pos.xyz, 1.0)).xyz;
+	outTerrainHeight = inTerrainHeight;
 
 	// Clip against reflection plane
 	if (length(pushConsts.clipPlane) != 0.0)  {

@@ -69,5 +69,17 @@ public:
 		writeDescriptorSet.pImageInfo = imageInfo;
 		writeDescriptorSet.descriptorCount = descriptorCount;
 		descriptors.push_back(writeDescriptorSet);
-	}	
+	}
+	void updateDescriptor(uint32_t binding, VkDescriptorType type, VkDescriptorImageInfo* imageInfo, uint32_t descriptorCount = 1) {
+		VkWriteDescriptorSet writeDescriptorSet{};
+		for (auto &descriptor : descriptors) {
+			if (descriptor.dstBinding == binding) {
+				descriptor.descriptorType = type;
+				descriptor.pImageInfo = imageInfo;
+				descriptor.descriptorCount = descriptorCount;
+				vkUpdateDescriptorSets(device, 1, &descriptor, 0, nullptr);
+				break;
+			}
+		}
+	}
 };

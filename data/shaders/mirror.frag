@@ -140,8 +140,10 @@ void main()
 	vec4 dudv = normal * distortAmount;
 
 	if (gl_FrontFacing) {
-		float shadow = shadowMapping();
-		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st) * (ambient + shadow);
+		//float shadow = shadowMapping();
+		float shadow = 1.0;
+		vec4 waterColor = vec4(0.75, 0.75, 1.0, 1.0);
+		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st) * (ambient + shadow) * waterColor;
 		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st) * (ambient + shadow);
 		outFragColor = mix(refraction, reflection, fresnel);
 	} else{

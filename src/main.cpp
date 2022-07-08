@@ -42,18 +42,150 @@
 #if defined(__ANDROID__)
 #define SHADOWMAP_DIM 2048
 #else
-#define SHADOWMAP_DIM 4096
+#define SHADOWMAP_DIM 8192
 #endif
 
 #define SHADOW_MAP_CASCADE_COUNT 4
+
+vks::VulkanDevice *defaultDevice;
+VkQueue defaultQueue;
+
+struct HeightMapSettings {
+	//glm::vec3 scale = glm::vec3(27.6f);
+	float noiseScale = 66.0f; // 27.6;
+	int seed = 0;
+	uint32_t width = 100;
+	uint32_t height = 100;
+	float heightScale = 38.0f;
+	uint32_t octaves = 4;
+	float persistence = 0.5f;
+	float lacunarity = 1.87f;
+	glm::vec2 offset = { 0,0 };
+	int mapChunkSize = 241;
+	int levelOfDetail = 1;
+} heightmapSettings;
+
+class TerrainChunk {
+public:
+	vks::HeightMap* heightMap = nullptr;
+	glm::ivec2 position;
+	int size;
+	
+	TerrainChunk(glm::ivec2 coords, int size) : size(size) {
+		position = coords;// *size;
+		glm::vec3 positionV3 = glm::vec3(position.x, 0.0f, position.y);
+		heightMap = new vks::HeightMap(defaultDevice, defaultQueue);
+	};
+
+	void update() {
+
+	}
+
+	void updateHeightMap () {
+		assert(heightMap);
+		if (heightMap->texture.image != VK_NULL_HANDLE) {
+			vkDeviceWaitIdle(defaultDevice->logicalDevice);
+			vkDestroyImageView(defaultDevice->logicalDevice, heightMap->texture.view, nullptr);
+			vkDestroyImage(defaultDevice->logicalDevice, heightMap->texture.image, nullptr);
+			vkDestroySampler(defaultDevice->logicalDevice, heightMap->texture.sampler, nullptr);
+			vkFreeMemory(defaultDevice->logicalDevice, heightMap->texture.deviceMemory, nullptr);
+		}
+		if (heightMap->vertexBuffer.buffer != VK_NULL_HANDLE) {
+			vkDestroyBuffer(defaultDevice->logicalDevice, heightMap->vertexBuffer.buffer, nullptr);
+			vkFreeMemory(defaultDevice->logicalDevice, heightMap->vertexBuffer.memory, nullptr);
+		}
+		heightMap->generate(
+			glm::ivec2(heightmapSettings.mapChunkSize),
+			heightmapSettings.seed,
+			heightmapSettings.noiseScale,
+			heightmapSettings.octaves,
+			heightmapSettings.persistence,
+			heightmapSettings.lacunarity,
+			heightmapSettings.offset);
+		glm::vec3 scale = glm::vec3(1.0f, -heightmapSettings.heightScale, 1.0f);
+		heightMap->generateMesh(
+			scale,
+			vks::HeightMap::topologyTriangles,
+			heightmapSettings.levelOfDetail
+		);
+	}
+
+	void draw(CommandBuffer* cb) {
+		heightMap->draw(cb->handle);
+	}
+};
+
+class InfiniteTerrain {
+public:
+	float maxViewDst = 300.0f;
+	glm::vec2 viewerPosition;
+	int chunkSize;
+	int chunksVisibleInViewDistance;
+
+	std::vector<TerrainChunk> terrainChunks{};
+
+	InfiniteTerrain() {
+		chunkSize = heightmapSettings.mapChunkSize - 1;
+		chunksVisibleInViewDistance = round(maxViewDst / chunkSize);
+	}
+
+	bool chunkPresent(glm::ivec2 coords) {
+		for (auto &chunk : terrainChunks) {
+			if (chunk.position.x == coords.x && chunk.position.y == coords.y) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool updateVisibleChunks() {
+		bool res = false;
+		int currentChunkCoordX = (int)round(viewerPosition.x / (float)chunkSize);
+		int currentChunkCoordY = (int)round(viewerPosition.y / (float)chunkSize);
+		for (int yOffset = -chunksVisibleInViewDistance; yOffset <= chunksVisibleInViewDistance; yOffset++) {
+			for (int xOffset = -chunksVisibleInViewDistance; xOffset <= chunksVisibleInViewDistance; xOffset++) {
+				glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
+				if (chunkPresent(viewedChunkCoord)) {
+					//
+				} else {
+					int l = heightmapSettings.levelOfDetail;
+					//heightmapSettings.levelOfDetail = 6;
+					heightmapSettings.offset.x = (float)viewedChunkCoord.x * (float)(chunkSize);
+					heightmapSettings.offset.y = (float)viewedChunkCoord.y * (float)(chunkSize);
+					TerrainChunk newChunk(viewedChunkCoord, chunkSize);
+					newChunk.updateHeightMap();
+					terrainChunks.push_back(newChunk);
+					heightmapSettings.levelOfDetail = l;
+					std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
+					res = true;
+				}
+			}
+		}
+		return res;
+	}
+
+	void updateChunks() {
+		for (auto& terrainChunk : terrainChunks) {
+			int l = heightmapSettings.levelOfDetail;
+			//heightmapSettings.levelOfDetail = 6;
+			heightmapSettings.offset.x = (float)terrainChunk.position.x * (float)(chunkSize);
+			heightmapSettings.offset.y = (float)terrainChunk.position.y * (float)(chunkSize);
+			terrainChunk.updateHeightMap();
+			heightmapSettings.levelOfDetail = l;
+		}
+	}
+};
 
 class VulkanExample : public VulkanExampleBase
 {
 public:
 	bool debugDisplayReflection = false;
 	bool debugDisplayRefraction = false;
+	bool displayWaterPlane = true;
+	bool displayWireFrame = false;
 
-	vks::HeightMap* heightMap;
+	//vks::HeightMap* heightMap;
+	InfiniteTerrain infiniteTerrain;
 
 	glm::vec4 lightPos;
 
@@ -75,12 +207,14 @@ public:
 		Pipeline* terrain;
 		Pipeline* sky;
 		Pipeline* depthpass;
+		Pipeline* wireframe;
 	} pipelines;
 
 	struct Textures {
 		vks::Texture2D heightMap;
 		vks::Texture2D skySphere;
 		vks::Texture2D waterNormalMap;
+		vks::Texture2D terrainGradient;
 		vks::Texture2DArray terrainArray;
 	} textures;
 
@@ -172,7 +306,7 @@ public:
 	float cascadeSplitLambda = 0.95f;
 
 	float zNear = 0.5f;
-	float zFar = 48.0f;
+	float zFar = 1024.0f;
 
 	// Resources of the depth map generation pass
 	struct CascadePushConstBlock {
@@ -221,18 +355,26 @@ public:
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
 		//camera.setTranslation(glm::vec3(18.0f, 22.5f, 57.5f));
 		camera.setTranslation(glm::vec3(0.0f, 1.0f, -6.0f));
-		camera.movementSpeed = 7.5f;
+		camera.movementSpeed = 7.5f * 10.0f;
+		camera.rotationSpeed = 0.25f;
 		settings.overlay = true;
 		camera.setRotation({ -27.0000000, 0.000000000, 0.000000000 });
 		camera.setPosition({ -0.0402765162, 7.17239332, -15.7546043 });
 		timerSpeed *= 0.05f;
 		// @todo
-		camera.setPosition(glm::vec3(-0.12f, 1.14f, -2.25f));
-		camera.setRotation(glm::vec3(-17.0f, 7.0f, 0.0f));
+		camera.setPosition(glm::vec3(0.0f, 10.0f, 0.0f));
+		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
+
+		//camera.setPosition(glm::vec3(241.0f/2.0f, 10.0f, 241.0f / 2.0f));
+
+		/*camera.setRotation(glm::vec3(270.0f, 0.0f, 0.0f));
+		camera.setTranslation(glm::vec3(0.0f, 25.0f, 0.0f));*/
+
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;
 		enabledFeatures.samplerAnisotropy = VK_TRUE;
 		enabledFeatures.depthClamp = VK_TRUE;
+		enabledFeatures.fillModeNonSolid = VK_TRUE;
 
 		// @todo
 		float radius = 20.0f;
@@ -247,6 +389,11 @@ public:
 		uboTerrain.layers[3] = glm::vec4(87.5f, 25.0f, glm::vec2(0.0));
 		uboTerrain.layers[4] = glm::vec4(117.5f, 45.0f, glm::vec2(0.0));
 		uboTerrain.layers[5] = glm::vec4(165.0f, 50.0f, glm::vec2(0.0));
+
+		for (auto& layer : uboTerrain.layers) {
+			layer.x /= 165.f;
+			layer.y /= 165.f;
+		}
 	}
 
 	~VulkanExample()
@@ -447,10 +594,18 @@ public:
 		models.skysphere.draw(cb->handle);
 		
 		// Terrain
-		cb->bindPipeline(pipelines.terrain);
+		if (displayWireFrame) {
+			cb->bindPipeline(pipelines.wireframe);
+		} else {
+			cb->bindPipeline(pipelines.terrain);
+		}
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
 		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
-		heightMap->draw(cb->handle);
+		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+			glm::vec3 pos = glm::vec3((float)terrainChunk.position.x, 0.0f, (float)terrainChunk.position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
+			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+			terrainChunk.draw(cb);
+		}
 	}
 
 	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
@@ -458,7 +613,7 @@ public:
 		cb->bindPipeline(pipelines.depthpass);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
 		cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
-		heightMap->draw(cb->handle);
+		//terrainChunk->draw(cb);
 	}
 
 	/*
@@ -694,6 +849,7 @@ public:
 
 	void buildCommandBuffers()
 	{
+		std::cout << "Building command buffers\n";
 		for (int32_t i = 0; i < commandBuffers.size(); i++) {
 			CommandBuffer *cb = commandBuffers[i];
 			cb->begin();
@@ -733,10 +889,13 @@ public:
 				cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
 				cb->setScissor(0, 0, width, height);			
 				drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
+
 				// Reflection plane
-				cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
-				cb->bindPipeline(pipelines.mirror);
-				models.plane.draw(cb->handle);
+				if (displayWaterPlane) {
+					cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
+					cb->bindPipeline(pipelines.mirror);
+					models.plane.draw(cb->handle);
+				}
 
 				if (debugDisplayReflection) {
 					uint32_t val0 = 0;
@@ -780,6 +939,7 @@ public:
 		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.heightMap.loadFromFile(getAssetPath() + "heightmap.ktx", VK_FORMAT_R16_UNORM, vulkanDevice, queue);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		textures.terrainGradient.loadFromFile(getAssetPath() + "textures/terrain_gradient_01.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 
 		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
 
@@ -799,6 +959,8 @@ public:
 		textures.heightMap.descriptor.sampler = textures.heightMap.sampler;
 
 		// Setup a repeating sampler for the terrain texture layers
+		// @todo: Sampler class, that can e.g. check against device if anisotropy > max and then lower it
+		// also enable aniso if max is > 1.0
 		vkDestroySampler(device, textures.terrainArray.sampler, nullptr);
 		samplerInfo = vks::initializers::samplerCreateInfo();
 		samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -823,14 +985,24 @@ public:
 	// Generate a terrain quad patch for feeding to the tessellation control shader
 	void generateTerrain()
 	{
-		const glm::vec3 scale = glm::vec3(0.15f * 0.25f, 1.0f, 0.15f * 0.25f);
-		const uint32_t patchSize = 256;
-		heightMap = new vks::HeightMap(vulkanDevice, queue);
 #if defined(__ANDROID__)
 		heightMap->loadFromFile(getAssetPath() + "heightmap.ktx", patchSize, androidApp->activity->assetManager, scale, vks::HeightMap::topologyTriangles);
 #else
-		heightMap->loadFromFile(getAssetPath() + "heightmap.ktx", patchSize, scale, vks::HeightMap::topologyTriangles);
+		//heightMap->loadFromFile(getAssetPath() + "heightmap.ktx", patchSize, scale, vks::HeightMap::topologyTriangles);
+		//terrainChunk = new TerrainChunk(glm::vec2(0.0f, 0.0f), 1.0f);
+		//updateHeightmap(true);
+
+		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, -camera.position.z);
+		infiniteTerrain.updateVisibleChunks();
+
 #endif
+	}
+
+	void updateHeightmap(bool firstRun)
+	{
+		infiniteTerrain.updateChunks();
+		// @todo
+		// terrainChunk->updateHeightMap();
 	}
 
 	void setupDescriptorPool()
@@ -871,12 +1043,14 @@ public:
 		descriptorSetLayouts.terrain->addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.terrain->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.terrain->addBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
-		descriptorSetLayouts.terrain->addBinding(4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->addBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->addBinding(5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.terrain->create();
 
 		pipelineLayouts.terrain = new PipelineLayout(device);
 		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.terrain);
 		pipelineLayouts.terrain->addPushConstantRange(sizeof(glm::mat4) + sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		pipelineLayouts.terrain->addPushConstantRange(sizeof(glm::vec4), 96, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.terrain->create();
 
 		// Skysphere
@@ -942,9 +1116,13 @@ public:
 		descriptorSets.terrain->addLayout(descriptorSetLayouts.terrain);
 		descriptorSets.terrain->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.terrain.descriptor);
 		descriptorSets.terrain->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.heightMap.descriptor);
+		//descriptorSets.terrain->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &heightMap->texture.descriptor);
+		// @todo
+		//descriptorSets.terrain->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.heightMap.descriptor);
 		descriptorSets.terrain->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
 		descriptorSets.terrain->addDescriptor(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
-		descriptorSets.terrain->addDescriptor(4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
+		descriptorSets.terrain->addDescriptor(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainGradient.descriptor);
+		descriptorSets.terrain->addDescriptor(5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
 		descriptorSets.terrain->create();
 
 		// Skysphere
@@ -1001,7 +1179,9 @@ public:
 		const std::vector<VkVertexInputAttributeDescription> vertexInputAttributes = {
 			vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vkglTF::Model::Vertex, pos)),
 			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vkglTF::Model::Vertex, normal)),
-			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, offsetof(vkglTF::Model::Vertex, uv))
+			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, offsetof(vkglTF::Model::Vertex, uv)),
+			vks::initializers::vertexInputAttributeDescription(0, 3, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vkglTF::Model::Vertex, joint0)),
+			vks::initializers::vertexInputAttributeDescription(0, 4, VK_FORMAT_R32_SFLOAT, offsetof(vkglTF::Model::Vertex, terrainHeight)),
 		};
 		VkPipelineVertexInputStateCreateInfo vertexInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
 		vertexInputState.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputBindings.size());
@@ -1064,8 +1244,18 @@ public:
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.vert.spv");
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.frag.spv");
 		pipelines.terrain->create();
+		rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
+		pipelines.wireframe = new Pipeline(device);
+		pipelines.wireframe->setCreateInfo(pipelineCI);
+		pipelines.wireframe->setCache(pipelineCache);
+		pipelines.wireframe->setLayout(pipelineLayouts.terrain);
+		pipelines.wireframe->setRenderPass(renderPass);
+		pipelines.wireframe->addShader(getAssetPath() + "shaders/terrain.vert.spv");
+		pipelines.wireframe->addShader(getAssetPath() + "shaders/terrain.frag.spv");
+		pipelines.wireframe->create();
 
 		// Sky
+		rasterizationState.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		pipelines.sky = new Pipeline(device);
@@ -1101,7 +1291,7 @@ public:
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsMirror, sizeof(uboWaterPlane)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsOffScreen, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsDebugQuad, sizeof(uboShared)));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboShared)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboTerrain)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.sky, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &depthPass.uniformBuffer, sizeof(depthPass.ubo)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.CSM, sizeof(uboCSM)));
@@ -1144,6 +1334,7 @@ public:
 		// Mirror
 		uboWaterPlane.projection = camera.matrices.perspective;
 		uboWaterPlane.model = camera.matrices.view * glm::mat4(1.0f);
+		//uboWaterPlane.model = glm::translate(uboWaterPlane.model, glm::vec3(0.0f, 0.25f, 0.0f));
 		uboWaterPlane.cameraPos = glm::vec4(camera.position, 0.0f);
 		uboWaterPlane.time = sin(glm::radians(timer * 360.0f));
 		memcpy(uniformBuffers.vsMirror.mapped, &uboWaterPlane, sizeof(uboWaterPlane));
@@ -1208,6 +1399,10 @@ public:
 	void prepare()
 	{
 		VulkanExampleBase::prepare();
+
+		defaultDevice = vulkanDevice;
+		defaultQueue = queue;
+
 		loadAssets();
 		generateTerrain();
 		prepareOffscreen();
@@ -1238,12 +1433,24 @@ public:
 	{
 		updateUniformBuffers();
 		updateUniformBufferOffscreen();
+		// @todo
+		infiniteTerrain.viewerPosition = glm::vec2(-camera.position.x, -camera.position.z);
+		// @todo
+		if (infiniteTerrain.updateVisibleChunks()) {
+			buildCommandBuffers();
+		}
 	}
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
 		bool updateTerrain = false;
 		if (overlay->header("Debugging")) {
+			if (overlay->checkBox("Wireframe", &displayWireFrame)) {
+				buildCommandBuffers();
+			}
+			if (overlay->checkBox("Waterplane", &displayWaterPlane)) {
+				buildCommandBuffers();
+			}
 			if (overlay->checkBox("Display reflection", &debugDisplayReflection)) {
 				buildCommandBuffers();
 			}
@@ -1263,13 +1470,36 @@ public:
 				updateUniformBuffers();
 			}
 		}
-		if (overlay->header("Terrain layers")) {
-			for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-				if (overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 200.0f)) {
-					updateTerrain = true;
-				}
+		if (overlay->header("Heightmap")) {
+			bool settingChanged = false;
+			settingChanged = overlay->sliderInt("Seed", &heightmapSettings.seed, 0, 128);
+			settingChanged |= overlay->sliderFloat("Noise scale", &heightmapSettings.noiseScale, 0.0f, 128.0f);
+			settingChanged |= overlay->sliderFloat("Height scale", &heightmapSettings.heightScale, 0.1f, 64.0f);
+			settingChanged |= overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
+			settingChanged |= overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
+			settingChanged |= overlay->sliderFloat("Offset.x", &heightmapSettings.offset.x, 0.0f, 16.0f);
+			settingChanged |= overlay->sliderFloat("Offset.y", &heightmapSettings.offset.y, 0.0f, 15.0f);
+			settingChanged |= overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
+			if (settingChanged) {
+				updateHeightmap(false);
 			}
 		}
+		if (overlay->header("Terrain")) {
+			overlay->text("%d chunks", infiniteTerrain.terrainChunks.size());
+		}
+		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
+
+		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightmapSettings.mapChunkSize - 1));
+		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightmapSettings.mapChunkSize - 1));
+		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
+
+		//if (overlay->header("Terrain layers")) {
+		//	for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
+		//		if (overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 200.0f)) {
+		//			updateTerrain = true;
+		//		}
+		//	}
+		//}
 			//if (overlay->sliderInt("Skysphere", &skysphereIndex, 0, skyspheres.size() - 1)) {
 		//	buildCommandBuffers();
 		//}

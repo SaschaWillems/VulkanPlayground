@@ -3,6 +3,7 @@
 layout (set = 0, binding = 1) uniform sampler2D samplerHeight; 
 layout (set = 0, binding = 2) uniform sampler2DArray samplerLayers;
 layout (set = 0, binding = 3) uniform sampler2DArray shadowMap;
+layout (set = 0, binding = 4) uniform sampler2D samplerGradient;
 
 layout (set = 0, binding = 0) uniform UBO 
 {
@@ -15,7 +16,7 @@ layout (set = 0, binding = 0) uniform UBO
 #define SHADOW_MAP_CASCADE_COUNT 4
 #define ambient 0.2
 
-layout (binding = 4) uniform UBOCSM {
+layout (binding = 5) uniform UBOCSM {
 	vec4 cascadeSplits;
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	mat4 inverseViewMat;
@@ -35,6 +36,8 @@ layout (location = 3) in vec3 inLightVec;
 layout (location = 4) in vec3 inEyePos;
 layout (location = 5) in vec3 inViewPos;
 layout (location = 6) in vec3 inPos;
+layout (location = 7) flat in vec3 inColor;
+layout (location = 8) in float inTerrainHeight;
 
 layout (location = 0) out vec4 outFragColor;
 
@@ -85,7 +88,9 @@ vec3 sampleTerrainLayer()
 	vec3 color = vec3(0.0);
 	
 	// Get height from displacement map
-	float height = textureLod(samplerHeight, inUV, 0.0).r * 255.0;
+	//float height = textureLod(samplerHeight, inUV, 0.0).r * 255.0;
+
+	float height = inTerrainHeight;
 	
 	for (int i = 0; i < ubo.layers.length(); i++) {
 		float start = ubo.layers[i].x - ubo.layers[i].y / 2.0;
@@ -94,7 +99,7 @@ vec3 sampleTerrainLayer()
 		float range = end - start;
 		float weight = (range - abs(height - end)) / range;
 		weight = max(0.0, weight);
-		color += weight * texture(samplerLayers, vec3(inUV * 16.0, i)).rgb;
+		color += weight * texture(samplerLayers, vec3(inUV * 32.0, i)).rgb;
 	}
 
 	return color;
@@ -141,8 +146,15 @@ void main()
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(-ubo.lightDir.xyz);
 	float diffuse = dot(N, L);
-	vec3 color = (ambient.rrr + (shadow) * (diffuse/* + specular*/)) * sampleTerrainLayer();
-	outFragColor.rgb = mix(color, fogColor, fog(0.5));
+//	vec3 color = (ambient.rrr + (shadow) * (diffuse/* + specular*/)) * texture(samplerHeight, inUV).rgb; //* sampleTerrainLayer();
+	vec3 color = (ambient.rrr + (diffuse/* + specular*/)) * sampleTerrainLayer();
+	//vec3 color = (ambient.rrr + (diffuse/* + specular*/)) * texture(samplerHeight, inUV).rgb; //* sampleTerrainLayer();
+	outFragColor = vec4(color, 1.0);
+//	color = sampleTerrainLayer();
+	//outFragColor.rgb = (ambient.rrr + (shadow) * (diffuse/* + specular*/)) * inColor;
+//	outFragColor.rgb = 
+	// Apply fog
+	outFragColor.rgb = mix(color, fogColor, fog(0.05));
 
 	// Color cascades (if enabled)
 	bool colorCascades = false;
@@ -162,5 +174,11 @@ void main()
 				break;
 		}
 	}
+
+//	outFragColor.rgb = texture(samplerHeight, inUV).rgb;
+//	outFragColor.rgb = inColor;
+//	outFragColor.rgb = vec3(diffuse);
+
+//	outFragColor.rgb = texture(samplerGradient, vec2(inTerrainHeight, 0.5)).rgb;
 
 }

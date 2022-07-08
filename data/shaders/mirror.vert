@@ -22,11 +22,13 @@ layout (location = 6) out vec3 outLPos;
 
 void main() 
 {
-	outUV = inUV;
-	outPos = ubo.projection * ubo.model * vec4(inPos.xyz, 1.0);
-	outLPos = inPos.xyz;
+	outUV = inUV * 100.0f;
+	vec3 pos = inPos;
+	pos.xz *= 100.0f;
+	outPos = ubo.projection * ubo.model * vec4(pos, 1.0);
+	outLPos = pos;
 	outNormal = inNormal;
-	outEyePos = ubo.cameraPos.xyz - inPos.xyz;
-	outViewPos = (ubo.model * vec4(inPos.xyz, 1.0)).xyz;
+	outEyePos = ubo.cameraPos.xyz - pos;
+	outViewPos = (ubo.model * vec4(pos, 1.0)).xyz;
 	gl_Position = outPos;		
 }
