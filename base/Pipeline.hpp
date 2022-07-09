@@ -75,6 +75,9 @@ public:
 		this->pipelineCI = pipelineCI;
 		this->bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 	}
+	void setVertexInputState(VkPipelineVertexInputStateCreateInfo* vertexInputStateCI) {
+		this->pipelineCI.pVertexInputState = vertexInputStateCI;
+	}
 	void setCache(VkPipelineCache cache) {
 		this->cache = cache;
 	}

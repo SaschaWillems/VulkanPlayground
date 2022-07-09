@@ -312,13 +312,13 @@ namespace vks
 			device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vertexBuffer, vertexBufferSize);
 			device->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &indexBuffer, indexBufferSize);
 			// Copy from staging buffers
-			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true, VK_QUEUE_TRANSFER_BIT);
 			VkBufferCopy copyRegion = {};
 			copyRegion.size = vertexBufferSize;
 			vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, vertexBuffer.buffer, 1, &copyRegion);
 			copyRegion.size = indexBufferSize;
 			vkCmdCopyBuffer(copyCmd, indexStaging.buffer, indexBuffer.buffer, 1, &copyRegion);
-			device->flushCommandBuffer(copyCmd, copyQueue, true);
+			device->flushCommandBuffer(copyCmd, copyQueue, true, VK_QUEUE_TRANSFER_BIT);
 
 			vkDestroyBuffer(device->logicalDevice, vertexStaging.buffer, nullptr);
 			vkFreeMemory(device->logicalDevice, vertexStaging.memory, nullptr);

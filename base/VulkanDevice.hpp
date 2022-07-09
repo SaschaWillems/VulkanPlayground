@@ -40,6 +40,7 @@ namespace vks
 
 		/** @brief Default command pool for the graphics queue family index */
 		VkCommandPool commandPool = VK_NULL_HANDLE;
+		VkCommandPool commandPoolTransfer = VK_NULL_HANDLE;
 
 		/** @brief Set to true when the debug marker extension is detected */
 		bool enableDebugMarkers = false;
@@ -328,6 +329,11 @@ namespace vks
 			{
 				// Create a default command pool for graphics command buffers
 				commandPool = createCommandPool(queueFamilyIndices.graphics);
+				if (queueFamilyIndices.graphics != queueFamilyIndices.transfer) {
+					commandPoolTransfer = createCommandPool(queueFamilyIndices.transfer);
+				} else {
+					commandPoolTransfer = commandPool;
+				}
 			}
 
 			this->enabledFeatures = enabledFeatures;
@@ -497,9 +503,14 @@ namespace vks
 		*
 		* @return A handle to the allocated command buffer
 		*/
-		VkCommandBuffer createCommandBuffer(VkCommandBufferLevel level, bool begin = false)
+		VkCommandBuffer createCommandBuffer(VkCommandBufferLevel level, bool begin = false, VkQueueFlagBits queueType = VK_QUEUE_GRAPHICS_BIT)
 		{
-			VkCommandBufferAllocateInfo cmdBufAllocateInfo = vks::initializers::commandBufferAllocateInfo(commandPool, level, 1);
+			VkCommandPool cmdPool = commandPool;
+			if (queueType == VK_QUEUE_TRANSFER_BIT) {
+				cmdPool = commandPoolTransfer;
+			}
+
+			VkCommandBufferAllocateInfo cmdBufAllocateInfo = vks::initializers::commandBufferAllocateInfo(cmdPool, level, 1);
 
 			VkCommandBuffer cmdBuffer;
 			VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &cmdBufAllocateInfo, &cmdBuffer));
@@ -524,7 +535,7 @@ namespace vks
 		* @note The queue that the command buffer is submitted to must be from the same family index as the pool it was allocated from
 		* @note Uses a fence to ensure command buffer has finished executing
 		*/
-		void flushCommandBuffer(VkCommandBuffer commandBuffer, VkQueue queue, bool free = true)
+		void flushCommandBuffer(VkCommandBuffer commandBuffer, VkQueue queue, bool free = true, VkQueueFlagBits queueType = VK_QUEUE_GRAPHICS_BIT)
 		{
 			if (commandBuffer == VK_NULL_HANDLE)
 			{
@@ -551,7 +562,11 @@ namespace vks
 
 			if (free)
 			{
-				vkFreeCommandBuffers(logicalDevice, commandPool, 1, &commandBuffer);
+				VkCommandPool cmdPool = commandPool;
+				if (queueType == VK_QUEUE_TRANSFER_BIT) {
+					cmdPool = commandPoolTransfer;
+				}
+				vkFreeCommandBuffers(logicalDevice, cmdPool, 1, &commandBuffer);
 			}
 		}
 
