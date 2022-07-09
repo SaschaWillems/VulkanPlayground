@@ -376,17 +376,9 @@ public:
 		camera.movementSpeed = 7.5f * 10.0f;
 		camera.rotationSpeed = 0.25f;
 		settings.overlay = true;
-		camera.setRotation({ -27.0000000, 0.000000000, 0.000000000 });
-		camera.setPosition({ -0.0402765162, 7.17239332, -15.7546043 });
 		timerSpeed *= 0.05f;
-		// @todo
-		camera.setPosition(glm::vec3(0.0f, 25.0f, 0.0f));
-		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
 
-		//camera.setPosition(glm::vec3(241.0f/2.0f, 10.0f, 241.0f / 2.0f));
-
-		/*camera.setRotation(glm::vec3(270.0f, 0.0f, 0.0f));
-		camera.setTranslation(glm::vec3(0.0f, 25.0f, 0.0f));*/
+		camera.setPosition(glm::vec3(0.0f, -25.0f, 0.0f));
 
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;

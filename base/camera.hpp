@@ -1,7 +1,7 @@
 /*
 * Basic camera class
 *
-* Copyright (C) 2016 by Sascha Willems - www.saschawillems.de
+* Copyright (C) 2016-2022 by Sascha Willems - www.saschawillems.de
 *
 * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 */
@@ -18,24 +18,26 @@ private:
 	float fov;
 	float znear, zfar;
 
+	const glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f);
+
+	glm::vec3 frontVector()
+	{
+		glm::vec3 front;
+		front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+		front.y = sin(glm::radians(pitch));
+		front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+		return glm::normalize(front);
+	}
+
 	void updateViewMatrix()
 	{
-		glm::mat4 rotM = glm::mat4(1.0f);
-		glm::mat4 transM;
-
-		rotM = glm::rotate(rotM, glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-		rotM = glm::rotate(rotM, glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-		rotM = glm::rotate(rotM, glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-
-		transM = glm::translate(glm::mat4(1.0f), position);
-
 		if (type == CameraType::firstperson)
 		{
-			matrices.view = rotM * transM;
+			matrices.view = glm::lookAt(position, position + frontVector(), upVector);
 		}
 		else
 		{
-			matrices.view = transM * rotM;
+			// @todo
 		}
 
 		updated = true;
@@ -44,8 +46,10 @@ public:
 	enum CameraType { lookat, firstperson };
 	CameraType type = CameraType::lookat;
 
-	glm::vec3 rotation = glm::vec3();
 	glm::vec3 position = glm::vec3();
+
+	float yaw = 0.0f;
+	float pitch = 0.0f;
 
 	float rotationSpeed = 1.0f;
 	float movementSpeed = 1.0f;
@@ -100,13 +104,20 @@ public:
 
 	void setRotation(glm::vec3 rotation)
 	{
-		this->rotation = rotation;
+		// @todo
 		updateViewMatrix();
 	};
 
+	void rotate(float yaw, float pitch)
+	{
+		this->yaw += yaw;
+		this->pitch += pitch;
+		updateViewMatrix();
+	}
+
 	void rotate(glm::vec3 delta)
 	{
-		this->rotation += delta;
+		// @todo
 		updateViewMatrix();
 	}
 
@@ -129,23 +140,16 @@ public:
 		{
 			if (moving())
 			{
-				glm::vec3 camFront;
-				camFront.x = -cos(glm::radians(rotation.x)) * sin(glm::radians(rotation.y));
-				camFront.y = sin(glm::radians(rotation.x));
-				camFront.z = cos(glm::radians(rotation.x)) * cos(glm::radians(rotation.y));
-				camFront = glm::normalize(camFront);
-
 				float moveSpeed = deltaTime * movementSpeed;
-
+				glm::vec3 front = frontVector();
 				if (keys.up)
-					position += camFront * moveSpeed;
+					position += front * moveSpeed;
 				if (keys.down)
-					position -= camFront * moveSpeed;
+					position -= front * moveSpeed;
 				if (keys.left)
-					position -= glm::normalize(glm::cross(camFront, glm::vec3(0.0f, 1.0f, 0.0f))) * moveSpeed;
+					position -= glm::normalize(glm::cross(front, upVector)) * moveSpeed;
 				if (keys.right)
-					position += glm::normalize(glm::cross(camFront, glm::vec3(0.0f, 1.0f, 0.0f))) * moveSpeed;
-
+					position += glm::normalize(glm::cross(front, upVector)) * moveSpeed;
 				updateViewMatrix();
 			}
 		}
@@ -165,11 +169,7 @@ public:
 			const float deadZone = 0.0015f;
 			const float range = 1.0f - deadZone;
 
-			glm::vec3 camFront;
-			camFront.x = -cos(glm::radians(rotation.x)) * sin(glm::radians(rotation.y));
-			camFront.y = sin(glm::radians(rotation.x));
-			camFront.z = cos(glm::radians(rotation.x)) * cos(glm::radians(rotation.y));
-			camFront = glm::normalize(camFront);
+			glm::vec3 camFront = frontVector();
 
 			float moveSpeed = deltaTime * movementSpeed * 2.0f;
 			float rotSpeed = deltaTime * rotationSpeed * 50.0f;
@@ -192,13 +192,13 @@ public:
 			if (fabsf(axisRight.x) > deadZone)
 			{
 				float pos = (fabsf(axisRight.x) - deadZone) / range;
-				rotation.y += pos * ((axisRight.x < 0.0f) ? -1.0f : 1.0f) * rotSpeed;
+				//rotation.y += pos * ((axisRight.x < 0.0f) ? -1.0f : 1.0f) * rotSpeed;
 				retVal = true;
 			}
 			if (fabsf(axisRight.y) > deadZone)
 			{
 				float pos = (fabsf(axisRight.y) - deadZone) / range;
-				rotation.x -= pos * ((axisRight.y < 0.0f) ? -1.0f : 1.0f) * rotSpeed;
+				//rotation.x -= pos * ((axisRight.y < 0.0f) ? -1.0f : 1.0f) * rotSpeed;
 				retVal = true;
 			}
 		}

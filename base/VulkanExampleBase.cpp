@@ -2198,8 +2198,8 @@ void VulkanExampleBase::windowResize()
 
 void VulkanExampleBase::handleMouseMove(int32_t x, int32_t y)
 {
-	int32_t dx = (int32_t)mousePos.x - x;
-	int32_t dy = (int32_t)mousePos.y - y;
+	int32_t dx = (int32_t)x - mousePos.x;
+	int32_t dy = (int32_t)y - mousePos.y;
 
 	bool handled = false;
 
@@ -2215,9 +2215,9 @@ void VulkanExampleBase::handleMouseMove(int32_t x, int32_t y)
 	}
 
 	if (mouseButtons.left) {
-		rotation.x += dy * 1.25f * rotationSpeed;
-		rotation.y -= dx * 1.25f * rotationSpeed;
-		camera.rotate(glm::vec3(dy * camera.rotationSpeed, -dx * camera.rotationSpeed, 0.0f));
+
+		// @todo
+		camera.rotate(dx * 1.25f * rotationSpeed * camera.rotationSpeed, dy * 1.25f * rotationSpeed * camera.rotationSpeed);
 		viewUpdated = true;
 	}
 	if (mouseButtons.right) {
