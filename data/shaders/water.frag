@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2022 by Sascha Willems - www.saschawillems.de
+ * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
+ */
+
 #version 450
 
 #define SHADOW_MAP_CASCADE_COUNT 4
@@ -143,15 +148,12 @@ void main()
 		//float shadow = shadowMapping();
 		float shadow = 1.0;
 		vec4 waterColor = vec4(0.75, 0.75, 1.0, 1.0);
-		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st) * (ambient + shadow) * waterColor;
-		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st) * (ambient + shadow);
-		outFragColor = mix(refraction, reflection, fresnel);
+		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);// * (ambient + shadow) * waterColor;
+		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);// * (ambient + shadow);
+		outFragColor = mix(refraction, reflection, fresnel) * waterColor;
 	} else{
 		outFragColor = vec4(0.0, 0.0, 0.0, 1.0);
 	}
 
-	outFragColor.rgb = mix(outFragColor.rgb, fogColor, fog(0.5));
-
 	outFragColor.a = 1.0;
-//	outFragColor.rgb = fresnel.rrr;
 }

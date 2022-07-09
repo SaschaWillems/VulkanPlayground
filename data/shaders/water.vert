@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2022 by Sascha Willems - www.saschawillems.de
+ * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
+ */
+
 #version 450
 
 layout (location = 0) in vec3 inPos;
@@ -29,7 +34,7 @@ layout (location = 6) out vec3 outLPos;
 
 void main() 
 {
-	outUV = inUV;
+	outUV = inUV * 8.0f;
 	vec3 pos = inPos;
 	pos.xz *= 24.1 / 2.0;
 	pos.xz += pushConsts.pos.xz;
