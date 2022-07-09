@@ -201,7 +201,7 @@ public:
 
 	struct {
 		Pipeline* debug;
-		Pipeline* mirror;
+		Pipeline* water;
 		Pipeline* waterOffscreen;
 		Pipeline* terrain;
 		Pipeline* terrainOffscreen;
@@ -229,7 +229,7 @@ public:
 
 	struct {
 		vks::Buffer vsShared;
-		vks::Buffer vsMirror;
+		vks::Buffer vsWater;
 		vks::Buffer vsOffScreen;
 		vks::Buffer vsDebugQuad;
 		vks::Buffer terrain;
@@ -422,7 +422,7 @@ public:
 	{
 		vkDestroySampler(device, offscreenPass.sampler, nullptr);
 		uniformBuffers.vsShared.destroy();
-		uniformBuffers.vsMirror.destroy();
+		uniformBuffers.vsWater.destroy();
 		uniformBuffers.vsOffScreen.destroy();
 		uniformBuffers.vsDebugQuad.destroy();
 	}
@@ -634,11 +634,13 @@ public:
 		// Water
 		if ((drawType == SceneDrawType::sceneDrawTypeDisplay) && (displayWaterPlane)) {
 			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
-			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.mirror);
+			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.water);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
-				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-				models.plane.draw(cb->handle);
+				if (terrainChunk->hasValidMesh) {
+					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
+					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+					models.plane.draw(cb->handle);
+				}
 			}
 		}
 
@@ -913,7 +915,7 @@ public:
 				cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.reflection.frameBuffer);
 				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
 				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-				//drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
+				drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
 				cb->endRenderPass();
 			}
 
@@ -1122,7 +1124,7 @@ public:
 		descriptorSets.waterplane = new DescriptorSet(device);
 		descriptorSets.waterplane->setPool(descriptorPool);
 		descriptorSets.waterplane->addLayout(descriptorSetLayouts.textured);
-		descriptorSets.waterplane->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsMirror.descriptor);
+		descriptorSets.waterplane->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsWater.descriptor);
 		descriptorSets.waterplane->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.refraction.descriptor);
 		descriptorSets.waterplane->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.reflection.descriptor);
 		descriptorSets.waterplane->addDescriptor(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.waterNormalMap.descriptor);
@@ -1271,15 +1273,15 @@ public:
 
 		// Water
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
-		pipelines.mirror = new Pipeline(device);
-		pipelines.mirror->setCreateInfo(pipelineCI);
-		pipelines.mirror->setVertexInputState(&vertexInputStateModel);
-		pipelines.mirror->setCache(pipelineCache);
-		pipelines.mirror->setLayout(pipelineLayouts.textured);
-		pipelines.mirror->setRenderPass(renderPass);
-		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.vert.spv");
-		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.frag.spv");
-		pipelines.mirror->create();
+		pipelines.water = new Pipeline(device);
+		pipelines.water->setCreateInfo(pipelineCI);
+		pipelines.water->setVertexInputState(&vertexInputStateModel);
+		pipelines.water->setCache(pipelineCache);
+		pipelines.water->setLayout(pipelineLayouts.textured);
+		pipelines.water->setRenderPass(renderPass);
+		pipelines.water->addShader(getAssetPath() + "shaders/water.vert.spv");
+		pipelines.water->addShader(getAssetPath() + "shaders/water.frag.spv");
+		pipelines.water->create();
 		// Offscreen
 		pipelines.waterOffscreen = new Pipeline(device);
 		pipelines.waterOffscreen->setCreateInfo(pipelineCI);
@@ -1287,12 +1289,13 @@ public:
 		pipelines.waterOffscreen->setCache(pipelineCache);
 		pipelines.waterOffscreen->setLayout(pipelineLayouts.textured);
 		pipelines.waterOffscreen->setRenderPass(offscreenPass.renderPass);
-		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/mirror.vert.spv");
-		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/mirror.frag.spv");
+		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/water.vert.spv");
+		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/water.frag.spv");
 		pipelines.waterOffscreen->create();
 
 		// Terrain
-		rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
+		//rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
+		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelines.terrain = new Pipeline(device);
 		pipelines.terrain->setCreateInfo(pipelineCI);
 		pipelines.terrain->setVertexInputState(&vertexInputState);
@@ -1303,6 +1306,7 @@ public:
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.frag.spv");
 		pipelines.terrain->create();
 		// Offscreen
+		//rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 		pipelines.terrainOffscreen = new Pipeline(device);
 		pipelines.terrainOffscreen->setCreateInfo(pipelineCI);
 		pipelines.terrainOffscreen->setVertexInputState(&vertexInputState);
@@ -1370,7 +1374,7 @@ public:
 	void prepareUniformBuffers()
 	{		
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsShared, sizeof(uboShared)));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsMirror, sizeof(uboWaterPlane)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsWater, sizeof(uboWaterPlane)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsOffScreen, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsDebugQuad, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboTerrain)));
@@ -1380,7 +1384,7 @@ public:
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.vsShared.map());
-		VK_CHECK_RESULT(uniformBuffers.vsMirror.map());
+		VK_CHECK_RESULT(uniformBuffers.vsWater.map());
 		VK_CHECK_RESULT(uniformBuffers.vsOffScreen.map());
 		VK_CHECK_RESULT(uniformBuffers.vsDebugQuad.map());
 		VK_CHECK_RESULT(uniformBuffers.terrain.map());
@@ -1419,7 +1423,7 @@ public:
 		//uboWaterPlane.model = glm::translate(uboWaterPlane.model, glm::vec3(0.0f, 0.25f, 0.0f));
 		uboWaterPlane.cameraPos = glm::vec4(camera.position, 0.0f);
 		uboWaterPlane.time = sin(glm::radians(timer * 360.0f));
-		memcpy(uniformBuffers.vsMirror.mapped, &uboWaterPlane, sizeof(uboWaterPlane));
+		memcpy(uniformBuffers.vsWater.mapped, &uboWaterPlane, sizeof(uboWaterPlane));
 
 		// Debug quad
 		uboShared.projection = glm::ortho(4.0f, 0.0f, 0.0f, 4.0f*(float)height / (float)width, -1.0f, 1.0f);
