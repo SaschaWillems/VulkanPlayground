@@ -9,7 +9,6 @@
 layout (set = 0, binding = 1) uniform sampler2D samplerHeight; 
 layout (set = 0, binding = 2) uniform sampler2DArray samplerLayers;
 layout (set = 0, binding = 3) uniform sampler2DArray shadowMap;
-layout (set = 0, binding = 4) uniform sampler2D samplerGradient;
 
 layout (set = 0, binding = 0) uniform UBO 
 {
@@ -22,7 +21,7 @@ layout (set = 0, binding = 0) uniform UBO
 #define SHADOW_MAP_CASCADE_COUNT 4
 #define ambient 0.2
 
-layout (binding = 5) uniform UBOCSM {
+layout (binding = 4) uniform UBOCSM {
 	vec4 cascadeSplits;
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	mat4 inverseViewMat;
@@ -91,17 +90,35 @@ float filterPCF(vec4 sc, uint cascadeIndex)
 	return shadowFactor / count;
 }
 
+vec3 triPlanarBlend(vec3 worldNormal){
+	vec3 blending = abs(worldNormal);
+	blending = normalize(max(blending, 0.00001));
+	float b = (blending.x + blending.y + blending.z);
+	blending /= vec3(b, b, b);
+	return blending;
+}
+
 vec3 sampleTerrainLayer()
 {
 	vec3 color = vec3(0.0);
 	float height = inTerrainHeight;
+	float texRepeat = 0.125f;
+	vec3 blend = triPlanarBlend(inNormal);
 	for (int i = 0; i < ubo.layers.length(); i++) {
 		float start = ubo.layers[i].x - ubo.layers[i].y / 2.0;
 		float end = ubo.layers[i].x + ubo.layers[i].y / 2.0;
 		float range = end - start;
 		float weight = (range - abs(height - end)) / range;
 		weight = max(0.0, weight);
-		color += weight * texture(samplerLayers, vec3(inUV * 32.0, i)).rgb;
+		// Triplanar mapping
+		vec3 xaxis = texture(samplerLayers, vec3(inPos.yz * texRepeat, i)).rgb;
+		vec3 yaxis = texture(samplerLayers, vec3(inPos.xz * texRepeat, i)).rgb;
+		vec3 zaxis = texture(samplerLayers, vec3(inPos.xy * texRepeat, i)).rgb;
+		vec3 texColor = xaxis * blend.x + yaxis * blend.y + zaxis * blend.z;
+		color += weight * texColor;
+		
+//		vec3 uv = vec3(inUV * 32.0, 1);
+//		color += weight * texture(samplerLayers, uv).rgb;
 	}
 	return color;
 }
@@ -162,6 +179,4 @@ void main()
 				break;
 		}
 	}
-
-//	outFragColor.rgb = sampleTerrainLayer();
 }

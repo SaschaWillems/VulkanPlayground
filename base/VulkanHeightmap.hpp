@@ -196,20 +196,20 @@ namespace vks
 				}
 			}
 
-			const uint32_t colorTextureSize = texture.width * texture.height * sizeof(glm::vec4);
-			glm::vec4* colorTextureData = new glm::vec4[colorTextureSize];
-			for (size_t y = 0; y < size.y; y++) {
-				for (size_t x = 0; x < size.x; x++) {
-					float currentHeight = data[x + y * texture.width];
-					for (size_t i = 0; i < regions.size(); i++) {
-						if (currentHeight <= regions[i].height) {
-							colorTextureData[x + y * texture.width] = glm::vec4(regions[i].color, 1.0f);
-							break;
-						}
-					}
-					//colorTextureData[x + y * texture.width] = glm::vec3(data[x + y * texture.width]);
-				}
-			}
+			//const uint32_t colorTextureSize = texture.width * texture.height * sizeof(glm::vec4);
+			//glm::vec4* colorTextureData = new glm::vec4[colorTextureSize];
+			//for (size_t y = 0; y < size.y; y++) {
+			//	for (size_t x = 0; x < size.x; x++) {
+			//		float currentHeight = data[x + y * texture.width];
+			//		for (size_t i = 0; i < regions.size(); i++) {
+			//			if (currentHeight <= regions[i].height) {
+			//				colorTextureData[x + y * texture.width] = glm::vec4(regions[i].color, 1.0f);
+			//				break;
+			//			}
+			//		}
+			//		//colorTextureData[x + y * texture.width] = glm::vec3(data[x + y * texture.width]);
+			//	}
+			//}
 
 			//texture.fromBuffer(
 			//	colorTextureData,
@@ -224,7 +224,7 @@ namespace vks
 			//	VK_FILTER_NEAREST
 			//);
 			
-			delete[] colorTextureData;
+			//delete[] colorTextureData;
 		}
 
 		void generateMesh(glm::vec3 scale, Topology topology, int levelOfDetail)
@@ -258,12 +258,19 @@ namespace vks
 				if (y < 0) { y = 0; }
 				if (x > dim) { x = dim; }
 				if (y > dim) { y = dim; }
-				return data[x + y * texture.width] * abs(scale.y);
+				float height = data[x + y * texture.width] *abs(scale.y);
+				if (height < 0.0f) {
+					height = 0.0f;
+				}
+				return height;
 			};
 
 			for (int32_t y = 0; y < width; y += meshSimplificationIncrement) {
 				for (int32_t x = 0; x < height; x += meshSimplificationIncrement) {
 					float currentHeight = data[x + y * width];
+					if (currentHeight < 0.0f) {
+						currentHeight = 0.0f;
+					}
 					vertices[vertexIndex].pos.x = topLeftX + (float)x;
 					vertices[vertexIndex].pos.y = currentHeight;
 					vertices[vertexIndex].pos.z = topLeftZ - (float)y;
@@ -272,26 +279,12 @@ namespace vks
 					vertices[vertexIndex].uv = glm::vec2((float)x / (float)width, (float)y / (float)height);
 					vertices[vertexIndex].terrainHeight = currentHeight;
 
-					// Normal
-					float dx = getHeight2(x < width - 1 ? x + 1 : x, y) - getHeight2(x > 0 ? x - 1 : x, y);
-					if (x == 0 || x == width - 1) {
-						dx *= 2.0f;
-					}
-					float dy = getHeight2(x, y < width - 1 ? y + 1 : y) - getHeight2(x, y > 0 ? y - 1 : y);
-					if (y == 0 || y == width - 1) {
-						dy *= 2.0f;
-					}
-					glm::vec3 A = glm::vec3(1.0f, 0.0f, dx);
-					glm::vec3 B = glm::vec3(0.0f, 1.0f, dy);
-					//glm::vec3 normal = (glm::normalize(glm::cross(A, B)) + 1.0f) * 0.5f;
-					vertices[vertexIndex].normal = glm::normalize(glm::cross(A, B));
-
-					for (size_t i = 0; i < regions.size(); i++) {
-						if (currentHeight <= regions[i].height) {
-							vertices[vertexIndex].color = glm::vec4(regions[i].color, 1.0f);
-							break;
-						}
-					}
+					float hL = getHeight2(x - 1, y);
+					float hR = getHeight2(x + 1, y);
+					float hD = getHeight2(x, y + 1);
+					float hU = getHeight2(x, y - 1);
+					glm::vec3 normalVector = glm::normalize(glm::vec3(hL - hR, -2.0f, hD - hU));
+					vertices[vertexIndex].normal = normalVector;
 
 					if ((x < width - 1) && (y < height - 1)) {
 						addTriangle(vertexIndex, vertexIndex + verticesPerLine + 1, vertexIndex + verticesPerLine);
