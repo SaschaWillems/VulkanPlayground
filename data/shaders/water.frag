@@ -4,6 +4,7 @@
  */
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 #define SHADOW_MAP_CASCADE_COUNT 4
 #define ambient 0.2
@@ -44,6 +45,8 @@ const mat4 biasMat = mat4(
 	0.0, 0.0, 1.0, 0.0,
 	0.5, 0.5, 0.0, 1.0 
 );
+
+#include "includes/fog.glsl"
 
 float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex)
 {
@@ -102,18 +105,8 @@ float shadowMapping()
 	}
 }
 
-float fog(float density)
-{
-	const float LOG2 = -1.442695;
-	float dist = gl_FragCoord.z / gl_FragCoord.w * 0.1;
-	float d = density * dist;
-	return 1.0 - clamp(exp2(d * d * LOG2), 0.0, 1.0);
-}
-
 void main() 
 {
-	const vec3 fogColor = vec3(0.47, 0.5, 0.67);
-
 	const vec4 tangent = vec4(1.0, 0.0, 0.0, 0.0);
 	const vec4 viewNormal = vec4(0.0, -1.0, 0.0, 0.0);
 	const vec4 bitangent = vec4(0.0, 0.0, 1.0, 0.0);
@@ -144,16 +137,14 @@ void main()
 
 	vec4 dudv = normal * distortAmount;
 
+	vec4 color = vec4(0.75, 0.75, 1.0, 1.0);
 	if (gl_FrontFacing) {
 		//float shadow = shadowMapping();
 		float shadow = 1.0;
-		vec4 waterColor = vec4(0.75, 0.75, 1.0, 1.0);
 		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);// * (ambient + shadow) * waterColor;
 		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);// * (ambient + shadow);
-		outFragColor = mix(refraction, reflection, fresnel) * waterColor;
-	} else{
-		outFragColor = vec4(0.0, 0.0, 0.0, 1.0);
+		color *= mix(refraction, reflection, fresnel);
 	}
 
-	outFragColor.a = 1.0;
+	outFragColor = vec4(applyFog(color.rgb), 1.0);
 }
