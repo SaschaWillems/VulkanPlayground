@@ -87,13 +87,6 @@ public:
 
 	void updateHeightMap () {
 		assert(heightMap);
-		//if (heightMap->texture.image != VK_NULL_HANDLE) {
-		//	vkDeviceWaitIdle(defaultDevice->logicalDevice);
-		//	vkDestroyImageView(defaultDevice->logicalDevice, heightMap->texture.view, nullptr);
-		//	vkDestroyImage(defaultDevice->logicalDevice, heightMap->texture.image, nullptr);
-		//	vkDestroySampler(defaultDevice->logicalDevice, heightMap->texture.sampler, nullptr);
-		//	vkFreeMemory(defaultDevice->logicalDevice, heightMap->texture.deviceMemory, nullptr);
-		//}
 		if (heightMap->vertexBuffer.buffer != VK_NULL_HANDLE) {
 			vkDestroyBuffer(defaultDevice->logicalDevice, heightMap->vertexBuffer.buffer, nullptr);
 			vkFreeMemory(defaultDevice->logicalDevice, heightMap->vertexBuffer.memory, nullptr);
@@ -209,8 +202,11 @@ public:
 	struct {
 		Pipeline* debug;
 		Pipeline* mirror;
+		Pipeline* waterOffscreen;
 		Pipeline* terrain;
+		Pipeline* terrainOffscreen;
 		Pipeline* sky;
+		Pipeline* skyOffscreen;
 		Pipeline* depthpass;
 		Pipeline* wireframe;
 	} pipelines;
@@ -613,8 +609,10 @@ public:
 			break;
 		}
 
+		bool offscreen = drawType != SceneDrawType::sceneDrawTypeDisplay;
+
 		// Skysphere
-		cb->bindPipeline(pipelines.sky);
+		cb->bindPipeline(offscreen ? pipelines.skyOffscreen : pipelines.sky);
 		cb->bindDescriptorSets(pipelineLayouts.sky, { descriptorSets.skysphere }, 0);
 		cb->updatePushConstant(pipelineLayouts.sky, 0, &pushConst);
 		models.skysphere.draw(cb->handle);
@@ -623,7 +621,7 @@ public:
 		if (displayWireFrame) {
 			cb->bindPipeline(pipelines.wireframe);
 		} else {
-			cb->bindPipeline(pipelines.terrain);
+			cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
 		}
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
 		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
@@ -636,7 +634,7 @@ public:
 		// Water
 		if ((drawType == SceneDrawType::sceneDrawTypeDisplay) && (displayWaterPlane)) {
 			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
-			cb->bindPipeline(pipelines.mirror);
+			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.mirror);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
 				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
@@ -904,7 +902,7 @@ public:
 				cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.refraction.frameBuffer);
 				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
 				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-				//drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
+				drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
 				cb->endRenderPass();
 			}
 
@@ -1271,7 +1269,7 @@ public:
 
 		depthStencilState.depthTestEnable = VK_TRUE;
 
-		// Mirror
+		// Water
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelines.mirror = new Pipeline(device);
 		pipelines.mirror->setCreateInfo(pipelineCI);
@@ -1282,6 +1280,16 @@ public:
 		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.vert.spv");
 		pipelines.mirror->addShader(getAssetPath() + "shaders/mirror.frag.spv");
 		pipelines.mirror->create();
+		// Offscreen
+		pipelines.waterOffscreen = new Pipeline(device);
+		pipelines.waterOffscreen->setCreateInfo(pipelineCI);
+		pipelines.waterOffscreen->setVertexInputState(&vertexInputStateModel);
+		pipelines.waterOffscreen->setCache(pipelineCache);
+		pipelines.waterOffscreen->setLayout(pipelineLayouts.textured);
+		pipelines.waterOffscreen->setRenderPass(offscreenPass.renderPass);
+		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/mirror.vert.spv");
+		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/mirror.frag.spv");
+		pipelines.waterOffscreen->create();
 
 		// Terrain
 		rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
@@ -1294,6 +1302,17 @@ public:
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.vert.spv");
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.frag.spv");
 		pipelines.terrain->create();
+		// Offscreen
+		pipelines.terrainOffscreen = new Pipeline(device);
+		pipelines.terrainOffscreen->setCreateInfo(pipelineCI);
+		pipelines.terrainOffscreen->setVertexInputState(&vertexInputState);
+		pipelines.terrainOffscreen->setCache(pipelineCache);
+		pipelines.terrainOffscreen->setLayout(pipelineLayouts.terrain);
+		pipelines.terrainOffscreen->setRenderPass(offscreenPass.renderPass);
+		pipelines.terrainOffscreen->addShader(getAssetPath() + "shaders/terrain.vert.spv");
+		pipelines.terrainOffscreen->addShader(getAssetPath() + "shaders/terrain.frag.spv");
+		pipelines.terrainOffscreen->create();
+		// Wireframe (@todo: offscreen)
 		rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
 		pipelines.wireframe = new Pipeline(device);
 		pipelines.wireframe->setCreateInfo(pipelineCI);
@@ -1318,6 +1337,16 @@ public:
 		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.vert.spv");
 		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
 		pipelines.sky->create();
+		// Offscreen
+		pipelines.skyOffscreen = new Pipeline(device);
+		pipelines.skyOffscreen->setCreateInfo(pipelineCI);
+		pipelines.skyOffscreen->setVertexInputState(&vertexInputStateModel);
+		pipelines.skyOffscreen->setCache(pipelineCache);
+		pipelines.skyOffscreen->setLayout(pipelineLayouts.sky);
+		pipelines.skyOffscreen->setRenderPass(offscreenPass.renderPass);
+		pipelines.skyOffscreen->addShader(getAssetPath() + "shaders/skysphere.vert.spv");
+		pipelines.skyOffscreen->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
+		pipelines.skyOffscreen->create();
 
 		depthStencilState.depthWriteEnable = VK_TRUE;
 
