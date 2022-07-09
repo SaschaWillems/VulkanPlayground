@@ -181,6 +181,7 @@ public:
 	bool debugDisplayRefraction = false;
 	bool displayWaterPlane = true;
 	bool displayWireFrame = false;
+	bool renderShadows = false;
 
 	//vks::HeightMap* heightMap;
 	InfiniteTerrain infiniteTerrain;
@@ -648,11 +649,17 @@ public:
 	}
 
 	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
-		const CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
+		const float chunkDim = 241.0f;// *1.25f;
+		CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
 		cb->bindPipeline(pipelines.depthpass);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
-		cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
-		//terrainChunk->draw(cb);
+		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+			glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+			pushConst.position = glm::vec4(pos, 0.0f);
+			cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
+			//vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+			terrainChunk->draw(cb);
+		}
 	}
 
 	/*
@@ -896,7 +903,9 @@ public:
 			/*
 				CSM
 			*/
-			drawCSM(cb);
+			if (renderShadows) {
+				drawCSM(cb);
+			}
 
 			/*
 				Render refraction
