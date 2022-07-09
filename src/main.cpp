@@ -1,10 +1,10 @@
 /*
-* Vulkan Playground
-*
-* Copyright (C) Sascha Willems - www.saschawillems.de
-*
-* This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
-*/
+ * Vulkan Playground
+ *
+ * Copyright (C) Sascha Willems - www.saschawillems.de
+ *
+ * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +51,7 @@
 
 vks::VulkanDevice *defaultDevice;
 VkQueue defaultQueue;
+VkQueue transferQueue;
 
 struct HeightMapSettings {
 	//glm::vec3 scale = glm::vec3(27.6f);
@@ -77,7 +78,7 @@ public:
 	TerrainChunk(glm::ivec2 coords, int size) : size(size) {
 		position = coords;// *size;
 		glm::vec3 positionV3 = glm::vec3(position.x, 0.0f, position.y);
-		heightMap = new vks::HeightMap(defaultDevice, defaultQueue);
+		heightMap = new vks::HeightMap(defaultDevice, transferQueue);
 	};
 
 	void update() {
@@ -363,7 +364,7 @@ public:
 					heightmapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
 					chunk->updateHeightMap();
 				}
-				std::cout << infiniteTerrain.terrainChunkgsUpdateList.size() << "Terrain chunks created\n";
+				std::cout << infiniteTerrain.terrainChunkgsUpdateList.size() << " Terrain chunks created\n";
 				infiniteTerrain.terrainChunkgsUpdateList.clear();
 			}
 		}
@@ -892,7 +893,7 @@ public:
 				cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.refraction.frameBuffer);
 				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
 				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-				drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
+				//drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
 				cb->endRenderPass();
 			}
 
@@ -903,7 +904,7 @@ public:
 				cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.reflection.frameBuffer);
 				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
 				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-				drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
+				//drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
 				cb->endRenderPass();
 			}
 
@@ -1417,6 +1418,10 @@ public:
 		submitInfo.pCommandBuffers = &commandBuffers[currentBuffer]->handle;
 
 		// Submit to queue
+		if (vulkanDevice->queueFamilyIndices.graphics == vulkanDevice->queueFamilyIndices.transfer) {
+			// If we don't have a dedicated transfer queue, we need to make sure that the main and background threads don't use the (graphics) pipeline simultaneously
+			std::lock_guard<std::mutex> guard(lock_guard);
+		}
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
 		VulkanExampleBase::submitFrame();
@@ -1428,6 +1433,14 @@ public:
 
 		defaultDevice = vulkanDevice;
 		defaultQueue = queue;
+
+		// We try to get a transfer queue for background uploads
+		if (vulkanDevice->queueFamilyIndices.graphics != vulkanDevice->queueFamilyIndices.transfer) {
+			std::cout << "Using dedicated transfer queue for background uploads\n";
+			vkGetDeviceQueue(device, vulkanDevice->queueFamilyIndices.transfer, 0, &transferQueue);
+		} else {
+			transferQueue = queue;
+		}
 
 		loadAssets();
 		generateTerrain();
