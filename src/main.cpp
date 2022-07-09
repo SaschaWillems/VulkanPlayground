@@ -229,7 +229,6 @@ public:
 	struct Models {
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
-		vkglTF::Model testscene;
 	} models;
 
 	struct {
@@ -960,7 +959,6 @@ public:
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
-		models.testscene.loadFromFile(getAssetPath() + "scenes/testscene.gltf", vulkanDevice, queue);
 				
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
@@ -1200,21 +1198,36 @@ public:
 		VkPipelineDynamicStateCreateInfo dynamicState = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStateEnables);
 
 		// Vertex bindings and attributes
-		const std::vector<VkVertexInputBindingDescription> vertexInputBindings = {
-			vks::initializers::vertexInputBindingDescription(0, sizeof(vkglTF::Model::Vertex), VK_VERTEX_INPUT_RATE_VERTEX),
-		};
+		// Terrain / shared
+		const VkVertexInputBindingDescription vertexInputBinding = vks::initializers::vertexInputBindingDescription(0, sizeof(vks::HeightMap::Vertex), VK_VERTEX_INPUT_RATE_VERTEX);
 		const std::vector<VkVertexInputAttributeDescription> vertexInputAttributes = {
+			vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vks::HeightMap::Vertex, pos)),
+			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vks::HeightMap::Vertex, normal)),
+			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, offsetof(vks::HeightMap::Vertex, uv)),
+			vks::initializers::vertexInputAttributeDescription(0, 3, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vks::HeightMap::Vertex, color)),
+			vks::initializers::vertexInputAttributeDescription(0, 4, VK_FORMAT_R32_SFLOAT, offsetof(vks::HeightMap::Vertex, terrainHeight)),
+		};
+		VkPipelineVertexInputStateCreateInfo vertexInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
+		vertexInputState.vertexBindingDescriptionCount = 1;
+		vertexInputState.pVertexBindingDescriptions = &vertexInputBinding;
+		vertexInputState.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributes.size());
+		vertexInputState.pVertexAttributeDescriptions = vertexInputAttributes.data();
+
+		// glTF models
+		const VkVertexInputBindingDescription vertexInputBindingModel = vks::initializers::vertexInputBindingDescription(0, sizeof(vkglTF::Model::Vertex), VK_VERTEX_INPUT_RATE_VERTEX);
+		const std::vector<VkVertexInputAttributeDescription> vertexInputAttributesModel = {
 			vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vkglTF::Model::Vertex, pos)),
 			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vkglTF::Model::Vertex, normal)),
 			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, offsetof(vkglTF::Model::Vertex, uv)),
-			vks::initializers::vertexInputAttributeDescription(0, 3, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vkglTF::Model::Vertex, joint0)),
-			vks::initializers::vertexInputAttributeDescription(0, 4, VK_FORMAT_R32_SFLOAT, offsetof(vkglTF::Model::Vertex, terrainHeight)),
 		};
-		VkPipelineVertexInputStateCreateInfo vertexInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
-		vertexInputState.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputBindings.size());
-		vertexInputState.pVertexBindingDescriptions = vertexInputBindings.data();
-		vertexInputState.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributes.size());
-		vertexInputState.pVertexAttributeDescriptions = vertexInputAttributes.data();
+		VkPipelineVertexInputStateCreateInfo vertexInputStateModel = vks::initializers::pipelineVertexInputStateCreateInfo();
+		vertexInputStateModel.vertexBindingDescriptionCount = 1;
+		vertexInputStateModel.pVertexBindingDescriptions = &vertexInputBindingModel;
+		vertexInputStateModel.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributesModel.size());
+		vertexInputStateModel.pVertexAttributeDescriptions = vertexInputAttributesModel.data();
+
+		// Empty state (no input)
+		VkPipelineVertexInputStateCreateInfo vertexInputStateEmpty = vks::initializers::pipelineVertexInputStateCreateInfo();
 
 		VkGraphicsPipelineCreateInfo pipelineCI{};
 		pipelineCI.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -1233,6 +1246,7 @@ public:
 		// Debug
 		pipelines.debug = new Pipeline(device);
 		pipelines.debug->setCreateInfo(pipelineCI);
+		pipelines.debug->setVertexInputState(&vertexInputStateEmpty);
 		pipelines.debug->setCache(pipelineCache);
 		pipelines.debug->setLayout(pipelineLayouts.debug);
 		pipelines.debug->setRenderPass(renderPass);
@@ -1242,6 +1256,7 @@ public:
 		// Debug cascades
 		cascadeDebug.pipeline = new Pipeline(device);
 		cascadeDebug.pipeline->setCreateInfo(pipelineCI);
+		cascadeDebug.pipeline->setVertexInputState(&vertexInputStateEmpty);
 		cascadeDebug.pipeline->setCache(pipelineCache);
 		cascadeDebug.pipeline->setLayout(cascadeDebug.pipelineLayout);
 		cascadeDebug.pipeline->setRenderPass(renderPass);
@@ -1255,6 +1270,7 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelines.mirror = new Pipeline(device);
 		pipelines.mirror->setCreateInfo(pipelineCI);
+		pipelines.mirror->setVertexInputState(&vertexInputStateModel);
 		pipelines.mirror->setCache(pipelineCache);
 		pipelines.mirror->setLayout(pipelineLayouts.textured);
 		pipelines.mirror->setRenderPass(renderPass);
@@ -1265,6 +1281,7 @@ public:
 		// Terrain
 		pipelines.terrain = new Pipeline(device);
 		pipelines.terrain->setCreateInfo(pipelineCI);
+		pipelines.terrain->setVertexInputState(&vertexInputState);
 		pipelines.terrain->setCache(pipelineCache);
 		pipelines.terrain->setLayout(pipelineLayouts.terrain);
 		pipelines.terrain->setRenderPass(renderPass);
@@ -1274,6 +1291,7 @@ public:
 		rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
 		pipelines.wireframe = new Pipeline(device);
 		pipelines.wireframe->setCreateInfo(pipelineCI);
+		pipelines.wireframe->setVertexInputState(&vertexInputState);
 		pipelines.wireframe->setCache(pipelineCache);
 		pipelines.wireframe->setLayout(pipelineLayouts.terrain);
 		pipelines.wireframe->setRenderPass(renderPass);
@@ -1287,6 +1305,7 @@ public:
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		pipelines.sky = new Pipeline(device);
 		pipelines.sky->setCreateInfo(pipelineCI);
+		pipelines.sky->setVertexInputState(&vertexInputStateModel);
 		pipelines.sky->setCache(pipelineCache);
 		pipelines.sky->setLayout(pipelineLayouts.sky);
 		pipelines.sky->setRenderPass(renderPass);
@@ -1303,6 +1322,7 @@ public:
 		rasterizationState.depthClampEnable = deviceFeatures.depthClamp;
 		pipelines.depthpass = new Pipeline(device);
 		pipelines.depthpass->setCreateInfo(pipelineCI);
+		pipelines.depthpass->setVertexInputState(&vertexInputState);
 		pipelines.depthpass->setCache(pipelineCache);
 		pipelines.depthpass->setLayout(depthPass.pipelineLayout);
 		pipelines.depthpass->setRenderPass(depthPass.renderPass);
