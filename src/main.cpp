@@ -1074,8 +1074,7 @@ public:
 
 		pipelineLayouts.terrain = new PipelineLayout(device);
 		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.terrain);
-		pipelineLayouts.terrain->addPushConstantRange(sizeof(glm::mat4) + sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-		pipelineLayouts.terrain->addPushConstantRange(sizeof(glm::vec4), 96, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		pipelineLayouts.terrain->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.terrain->create();
 
 		// Skysphere
