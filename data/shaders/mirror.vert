@@ -13,6 +13,13 @@ layout (binding = 0) uniform UBO
 	float time;
 } ubo;
 
+layout(push_constant) uniform PushConsts {
+	mat4 scale;
+	vec4 clipPlane;
+	uint shadows;
+	layout(offset = 96) vec3 pos;
+} pushConsts;
+
 layout (location = 0) out vec2 outUV;
 layout (location = 1) out vec4 outPos;
 layout (location = 2) out vec3 outNormal;
@@ -22,9 +29,10 @@ layout (location = 6) out vec3 outLPos;
 
 void main() 
 {
-	outUV = inUV * 100.0f;
+	outUV = inUV;
 	vec3 pos = inPos;
-	pos.xz *= 100.0f;
+	pos.xz *= 24.1 / 2.0;
+	pos.xz += pushConsts.pos.xz;
 	outPos = ubo.projection * ubo.model * vec4(pos, 1.0);
 	outLPos = pos;
 	outNormal = inNormal;

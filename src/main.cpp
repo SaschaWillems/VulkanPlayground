@@ -106,7 +106,7 @@ public:
 			heightmapSettings.persistence,
 			heightmapSettings.lacunarity,
 			heightmapSettings.offset);
-		glm::vec3 scale = glm::vec3(1.0f, -heightmapSettings.heightScale, 1.0f);
+		glm::vec3 scale = glm::vec3(1.0f, -heightmapSettings.heightScale, 1.0f); // @todo
 		heightMap->generateMesh(
 			scale,
 			vks::HeightMap::topologyTriangles,
@@ -632,6 +632,18 @@ public:
 			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 			terrainChunk->draw(cb);
 		}
+
+		// Water
+		if ((drawType == SceneDrawType::sceneDrawTypeDisplay) && (displayWaterPlane)) {
+			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
+			cb->bindPipeline(pipelines.mirror);
+			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
+				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+				models.plane.draw(cb->handle);
+			}
+		}
+
 	}
 
 	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
@@ -916,13 +928,6 @@ public:
 				cb->setScissor(0, 0, width, height);			
 				drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
 
-				// Reflection plane
-				if (displayWaterPlane) {
-					cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
-					cb->bindPipeline(pipelines.mirror);
-					models.plane.draw(cb->handle);
-				}
-
 				if (debugDisplayReflection) {
 					uint32_t val0 = 0;
 					cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
@@ -1054,6 +1059,7 @@ public:
 
 		pipelineLayouts.textured = new PipelineLayout(device);
 		pipelineLayouts.textured->addLayout(descriptorSetLayouts.textured);
+		pipelineLayouts.textured->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.textured->create();
 
 		// Debug
@@ -1278,6 +1284,7 @@ public:
 		pipelines.mirror->create();
 
 		// Terrain
+		rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
 		pipelines.terrain = new Pipeline(device);
 		pipelines.terrain->setCreateInfo(pipelineCI);
 		pipelines.terrain->setVertexInputState(&vertexInputState);
