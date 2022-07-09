@@ -92,12 +92,12 @@ public:
 			vkFreeMemory(defaultDevice->logicalDevice, heightMap->vertexBuffer.memory, nullptr);
 		}
 		heightMap->generate(
-			glm::ivec2(heightmapSettings.mapChunkSize),
 			heightmapSettings.seed,
 			heightmapSettings.noiseScale,
 			heightmapSettings.octaves,
 			heightmapSettings.persistence,
 			heightmapSettings.lacunarity,
+			// @todo: base on offset instead of changing it
 			heightmapSettings.offset);
 		glm::vec3 scale = glm::vec3(1.0f, -heightmapSettings.heightScale, 1.0f); // @todo
 		heightMap->generateMesh(
@@ -616,6 +616,8 @@ public:
 		cb->updatePushConstant(pipelineLayouts.sky, 0, &pushConst);
 		models.skysphere.draw(cb->handle);
 		
+		const float chunkDim = 241.0f;// *1.25f;
+
 		// Terrain
 		if (displayWireFrame) {
 			cb->bindPipeline(pipelines.wireframe);
@@ -625,7 +627,7 @@ public:
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
 		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
+			glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
 			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 			terrainChunk->draw(cb);
 		}
@@ -636,7 +638,7 @@ public:
 			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.water);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 				if (terrainChunk->hasValidMesh) {
-					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
+					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 					models.plane.draw(cb->handle);
 				}
@@ -1013,17 +1015,8 @@ public:
 	// Generate a terrain quad patch for feeding to the tessellation control shader
 	void generateTerrain()
 	{
-#if defined(__ANDROID__)
-		heightMap->loadFromFile(getAssetPath() + "heightmap.ktx", patchSize, androidApp->activity->assetManager, scale, vks::HeightMap::topologyTriangles);
-#else
-		//heightMap->loadFromFile(getAssetPath() + "heightmap.ktx", patchSize, scale, vks::HeightMap::topologyTriangles);
-		//terrainChunk = new TerrainChunk(glm::vec2(0.0f, 0.0f), 1.0f);
-		//updateHeightmap(true);
-
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, -camera.position.z);
 		infiniteTerrain.updateVisibleChunks();
-
-#endif
 	}
 
 	void updateHeightmap(bool firstRun)
