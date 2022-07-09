@@ -211,18 +211,18 @@ namespace vks
 				}
 			}
 
-			texture.fromBuffer(
-				colorTextureData,
-				colorTextureSize,
-				VK_FORMAT_R32G32B32A32_SFLOAT,
-				//VK_FORMAT_R32_SFLOAT,
-				size.x,
-				size.y,
-				device,
-				copyQueue,
-				//VK_FILTER_LINEAR
-				VK_FILTER_NEAREST
-			);
+			//texture.fromBuffer(
+			//	colorTextureData,
+			//	colorTextureSize,
+			//	VK_FORMAT_R32G32B32A32_SFLOAT,
+			//	//VK_FORMAT_R32_SFLOAT,
+			//	size.x,
+			//	size.y,
+			//	device,
+			//	copyQueue,
+			//	//VK_FILTER_LINEAR
+			//	VK_FILTER_NEAREST
+			//);
 			
 			delete[] colorTextureData;
 		}

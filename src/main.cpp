@@ -11,6 +11,8 @@
 #include <string.h>
 #include <assert.h>
 #include <vector>
+#include <thread>
+#include <mutex>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -70,6 +72,7 @@ public:
 	vks::HeightMap* heightMap = nullptr;
 	glm::ivec2 position;
 	int size;
+	bool hasValidMesh = false;
 	
 	TerrainChunk(glm::ivec2 coords, int size) : size(size) {
 		position = coords;// *size;
@@ -83,13 +86,13 @@ public:
 
 	void updateHeightMap () {
 		assert(heightMap);
-		if (heightMap->texture.image != VK_NULL_HANDLE) {
-			vkDeviceWaitIdle(defaultDevice->logicalDevice);
-			vkDestroyImageView(defaultDevice->logicalDevice, heightMap->texture.view, nullptr);
-			vkDestroyImage(defaultDevice->logicalDevice, heightMap->texture.image, nullptr);
-			vkDestroySampler(defaultDevice->logicalDevice, heightMap->texture.sampler, nullptr);
-			vkFreeMemory(defaultDevice->logicalDevice, heightMap->texture.deviceMemory, nullptr);
-		}
+		//if (heightMap->texture.image != VK_NULL_HANDLE) {
+		//	vkDeviceWaitIdle(defaultDevice->logicalDevice);
+		//	vkDestroyImageView(defaultDevice->logicalDevice, heightMap->texture.view, nullptr);
+		//	vkDestroyImage(defaultDevice->logicalDevice, heightMap->texture.image, nullptr);
+		//	vkDestroySampler(defaultDevice->logicalDevice, heightMap->texture.sampler, nullptr);
+		//	vkFreeMemory(defaultDevice->logicalDevice, heightMap->texture.deviceMemory, nullptr);
+		//}
 		if (heightMap->vertexBuffer.buffer != VK_NULL_HANDLE) {
 			vkDestroyBuffer(defaultDevice->logicalDevice, heightMap->vertexBuffer.buffer, nullptr);
 			vkFreeMemory(defaultDevice->logicalDevice, heightMap->vertexBuffer.memory, nullptr);
@@ -108,10 +111,13 @@ public:
 			vks::HeightMap::topologyTriangles,
 			heightmapSettings.levelOfDetail
 		);
+		hasValidMesh = true;
 	}
 
 	void draw(CommandBuffer* cb) {
-		heightMap->draw(cb->handle);
+		if (hasValidMesh) {
+			heightMap->draw(cb->handle);
+		}
 	}
 };
 
@@ -122,7 +128,8 @@ public:
 	int chunkSize;
 	int chunksVisibleInViewDistance;
 
-	std::vector<TerrainChunk> terrainChunks{};
+	std::vector<TerrainChunk*> terrainChunks{};
+	std::vector<TerrainChunk*> terrainChunkgsUpdateList{};
 
 	InfiniteTerrain() {
 		chunkSize = heightmapSettings.mapChunkSize - 1;
@@ -131,7 +138,7 @@ public:
 
 	bool chunkPresent(glm::ivec2 coords) {
 		for (auto &chunk : terrainChunks) {
-			if (chunk.position.x == coords.x && chunk.position.y == coords.y) {
+			if (chunk->position.x == coords.x && chunk->position.y == coords.y) {
 				return true;
 			}
 		}
@@ -149,14 +156,11 @@ public:
 					//
 				} else {
 					int l = heightmapSettings.levelOfDetail;
-					//heightmapSettings.levelOfDetail = 6;
-					heightmapSettings.offset.x = (float)viewedChunkCoord.x * (float)(chunkSize);
-					heightmapSettings.offset.y = (float)viewedChunkCoord.y * (float)(chunkSize);
-					TerrainChunk newChunk(viewedChunkCoord, chunkSize);
-					newChunk.updateHeightMap();
+					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
 					terrainChunks.push_back(newChunk);
+					terrainChunkgsUpdateList.push_back(newChunk);
 					heightmapSettings.levelOfDetail = l;
-					std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
+					//std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
 					res = true;
 				}
 			}
@@ -168,9 +172,9 @@ public:
 		for (auto& terrainChunk : terrainChunks) {
 			int l = heightmapSettings.levelOfDetail;
 			//heightmapSettings.levelOfDetail = 6;
-			heightmapSettings.offset.x = (float)terrainChunk.position.x * (float)(chunkSize);
-			heightmapSettings.offset.y = (float)terrainChunk.position.y * (float)(chunkSize);
-			terrainChunk.updateHeightMap();
+			heightmapSettings.offset.x = (float)terrainChunk->position.x * (float)(chunkSize);
+			heightmapSettings.offset.y = (float)terrainChunk->position.y * (float)(chunkSize);
+			terrainChunk->updateHeightMap();
 			heightmapSettings.levelOfDetail = l;
 		}
 	}
@@ -347,6 +351,24 @@ public:
 	};
 	std::array<Cascade, SHADOW_MAP_CASCADE_COUNT> cascades;
 
+	std::mutex lock_guard;
+
+	void terrainUpdateThreadFn() {
+		while (true) {
+			if (infiniteTerrain.terrainChunkgsUpdateList.size() > 0) {
+				std::lock_guard<std::mutex> guard(lock_guard);
+				for (size_t i = 0; i < infiniteTerrain.terrainChunkgsUpdateList.size(); i++) {
+					TerrainChunk* chunk = infiniteTerrain.terrainChunkgsUpdateList[i];
+					heightmapSettings.offset.x = (float)chunk->position.x * (float)(chunk->size);
+					heightmapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
+					chunk->updateHeightMap();
+				}
+				std::cout << infiniteTerrain.terrainChunkgsUpdateList.size() << "Terrain chunks created\n";
+				infiniteTerrain.terrainChunkgsUpdateList.clear();
+			}
+		}
+	}
+
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
 		title = "Vulkan Playground";
@@ -362,7 +384,7 @@ public:
 		camera.setPosition({ -0.0402765162, 7.17239332, -15.7546043 });
 		timerSpeed *= 0.05f;
 		// @todo
-		camera.setPosition(glm::vec3(0.0f, 10.0f, 0.0f));
+		camera.setPosition(glm::vec3(0.0f, 25.0f, 0.0f));
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
 
 		//camera.setPosition(glm::vec3(241.0f/2.0f, 10.0f, 241.0f / 2.0f));
@@ -394,6 +416,10 @@ public:
 			layer.x /= 165.f;
 			layer.y /= 165.f;
 		}
+
+		// Spawn background thread that creates newly visible terrain chunkgs
+		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
+		backgroundLoadingThread.detach();
 	}
 
 	~VulkanExample()
@@ -602,9 +628,9 @@ public:
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
 		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			glm::vec3 pos = glm::vec3((float)terrainChunk.position.x, 0.0f, (float)terrainChunk.position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
+			glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(241.0f - 1.0f, 0.0f, 241.0f - 1.0f);
 			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-			terrainChunk.draw(cb);
+			terrainChunk->draw(cb);
 		}
 	}
 
@@ -849,7 +875,7 @@ public:
 
 	void buildCommandBuffers()
 	{
-		std::cout << "Building command buffers\n";
+		//std::cout << "Building command buffers\n";
 		for (int32_t i = 0; i < commandBuffers.size(); i++) {
 			CommandBuffer *cb = commandBuffers[i];
 			cb->begin();
@@ -1418,6 +1444,7 @@ public:
 
 	virtual void render()
 	{
+		buildCommandBuffers();
 		if (!prepared)
 			return;
 		draw();
