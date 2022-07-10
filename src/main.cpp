@@ -915,83 +915,6 @@ public:
 		Sample
 	*/
 
-	void buildCommandBuffers()
-	{
-		//std::cout << "Building command buffers\n";
-		for (int32_t i = 0; i < commandBuffers.size(); i++) {
-			CommandBuffer *cb = commandBuffers[i];
-			cb->begin();
-
-			/*
-				CSM
-			*/
-			if (renderShadows) {
-				drawCSM(cb);
-			}
-
-			/*
-				Render refraction
-			*/	
-			{
-				cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.refraction.frameBuffer);
-				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
-				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-				drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
-				cb->endRenderPass();
-			}
-
-			/*
-				Render reflection
-			*/
-			{
-				cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.reflection.frameBuffer);
-				cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
-				cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-				drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
-				cb->endRenderPass();
-			}
-
-			/*
-				Scene rendering with reflection, refraction and shadows
-			*/
-			{
-				cb->beginRenderPass(renderPass, frameBuffers[i]);
-				cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
-				cb->setScissor(0, 0, width, height);			
-				drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
-
-				if (debugDisplayReflection) {
-					uint32_t val0 = 0;
-					cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
-					cb->bindPipeline(pipelines.debug);
-					cb->updatePushConstant(pipelineLayouts.debug, 0, &val0);
-					cb->draw(6, 1, 0, 0);
-				}
-
-				if (debugDisplayRefraction) {
-					uint32_t val1 = 1;
-					cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
-					cb->bindPipeline(pipelines.debug);
-					cb->updatePushConstant(pipelineLayouts.debug, 0, &val1);
-					cb->draw(6, 1, 0, 0);
-				}
-
-				if (cascadeDebug.enabled) {
-					const CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeDebug.cascadeIndex };
-					cb->bindDescriptorSets(cascadeDebug.pipelineLayout, { cascadeDebug.descriptorSet }, 0);
-					cb->bindPipeline(cascadeDebug.pipeline);
-					cb->updatePushConstant(cascadeDebug.pipelineLayout, 0, &pushConst);
-					cb->draw(6, 1, 0, 0);
-				}
-
-				drawUI(cb->handle);
-
-				cb->endRenderPass();
-			}
-			cb->end();
-		}
-	}
-
 	void loadAssets()
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
@@ -1490,24 +1413,6 @@ public:
 		memcpy(uniformBuffers.vsOffScreen.mapped, &uboShared, sizeof(uboShared));
 	}
 
-	void draw()
-	{
-		VulkanExampleBase::prepareFrame();
-
-		// Command buffer to be sumitted to the queue
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffers[currentBuffer]->handle;
-
-		// Submit to queue
-		if (vulkanDevice->queueFamilyIndices.graphics == vulkanDevice->queueFamilyIndices.transfer) {
-			// If we don't have a dedicated transfer queue, we need to make sure that the main and background threads don't use the (graphics) pipeline simultaneously
-			std::lock_guard<std::mutex> guard(lock_guard);
-		}
-		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
-
-		VulkanExampleBase::submitFrame();
-	}
-
 	void prepare()
 	{
 		VulkanExampleBase::prepare();
@@ -1532,16 +1437,97 @@ public:
 		preparePipelines();
 		setupDescriptorPool();
 		setupDescriptorSet();
-		buildCommandBuffers();
+		// @todo
+		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
+		infiniteTerrain.updateVisibleChunks();
 		prepared = true;
+	}
+
+	void buildCommandBuffer(int index) 
+	{
+		CommandBuffer* cb = commandBuffers[index];
+		cb->begin();
+
+		// CSM
+		if (renderShadows) {
+			drawCSM(cb);
+		}
+
+		// Refraction
+		{
+			cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.refraction.frameBuffer);
+			cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
+			cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
+			drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
+			cb->endRenderPass();
+		}
+
+		// Reflection
+		{
+			cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.reflection.frameBuffer);
+			cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
+			cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
+			drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
+			cb->endRenderPass();
+		}
+
+		// Scene
+		{
+			cb->beginRenderPass(renderPass, frameBuffers[index]);
+			cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
+			cb->setScissor(0, 0, width, height);
+			drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
+
+			if (debugDisplayReflection) {
+				uint32_t val0 = 0;
+				cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
+				cb->bindPipeline(pipelines.debug);
+				cb->updatePushConstant(pipelineLayouts.debug, 0, &val0);
+				cb->draw(6, 1, 0, 0);
+			}
+
+			if (debugDisplayRefraction) {
+				uint32_t val1 = 1;
+				cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
+				cb->bindPipeline(pipelines.debug);
+				cb->updatePushConstant(pipelineLayouts.debug, 0, &val1);
+				cb->draw(6, 1, 0, 0);
+			}
+
+			if (cascadeDebug.enabled) {
+				const CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeDebug.cascadeIndex };
+				cb->bindDescriptorSets(cascadeDebug.pipelineLayout, { cascadeDebug.descriptorSet }, 0);
+				cb->bindPipeline(cascadeDebug.pipeline);
+				cb->updatePushConstant(cascadeDebug.pipelineLayout, 0, &pushConst);
+				cb->draw(6, 1, 0, 0);
+			}
+
+			drawUI(cb->handle);
+
+			cb->endRenderPass();
+		}
+		cb->end();
 	}
 
 	virtual void render()
 	{
-		buildCommandBuffers();
-		if (!prepared)
+		if (!prepared) {
 			return;
-		draw();
+		}
+
+		VulkanExampleBase::prepareFrame();
+
+		buildCommandBuffer(currentBuffer);
+
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffers[currentBuffer]->handle;
+		if (vulkanDevice->queueFamilyIndices.graphics == vulkanDevice->queueFamilyIndices.transfer) {
+			// If we don't have a dedicated transfer queue, we need to make sure that the main and background threads don't use the (graphics) pipeline simultaneously
+			std::lock_guard<std::mutex> guard(lock_guard);
+		}
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+		VulkanExampleBase::submitFrame();
+
 		if (!paused || camera.updated)
 		{
 			updateCascades();
@@ -1556,38 +1542,21 @@ public:
 		updateUniformBufferOffscreen();
 		// @todo
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		// @todo
-		if (infiniteTerrain.updateVisibleChunks()) {
-			buildCommandBuffers();
-		}
+		infiniteTerrain.updateVisibleChunks();
 	}
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
 		bool updateTerrain = false;
 		if (overlay->header("Debugging")) {
-			if (overlay->checkBox("Fix frustum", &fixFrustum)) {
-				buildCommandBuffers();
-			}
-			if (overlay->checkBox("Wireframe", &displayWireFrame)) {
-				buildCommandBuffers();
-			}
-			if (overlay->checkBox("Waterplane", &displayWaterPlane)) {
-				buildCommandBuffers();
-			}
-			if (overlay->checkBox("Display reflection", &debugDisplayReflection)) {
-				buildCommandBuffers();
-			}
-			if (overlay->checkBox("Display refraction", &debugDisplayRefraction)) {
-				buildCommandBuffers();
-			}
-			if (overlay->checkBox("Display cascades", &cascadeDebug.enabled)) {
-				buildCommandBuffers();
-			}
+			overlay->checkBox("Fix frustum", &fixFrustum);
+			overlay->checkBox("Wireframe", &displayWireFrame);
+			overlay->checkBox("Waterplane", &displayWaterPlane);
+			overlay->checkBox("Display reflection", &debugDisplayReflection);
+			overlay->checkBox("Display refraction", &debugDisplayRefraction);
+			overlay->checkBox("Display cascades", &cascadeDebug.enabled);
 			if (cascadeDebug.enabled) {
-				if (overlay->sliderInt("Cascade", &cascadeDebug.cascadeIndex, 0, SHADOW_MAP_CASCADE_COUNT - 1)) {
-					buildCommandBuffers();
-				}
+				overlay->sliderInt("Cascade", &cascadeDebug.cascadeIndex, 0, SHADOW_MAP_CASCADE_COUNT - 1);
 			}
 			if (overlay->sliderFloat("Split lambda", &cascadeSplitLambda, 0.1f, 1.0f)) {
 				updateCascades();
