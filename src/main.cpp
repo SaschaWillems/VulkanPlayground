@@ -34,6 +34,7 @@
 #include "DescriptorPool.hpp"
 #include "Image.hpp"
 #include "ImageView.hpp"
+#include "frustum.hpp"
 
 #define ENABLE_VALIDATION false
 
@@ -52,6 +53,8 @@
 vks::VulkanDevice *defaultDevice;
 VkQueue defaultQueue;
 VkQueue transferQueue;
+vks::Frustum frustum;
+const float chunkDim = 241.0f;
 
 struct HeightMapSettings {
 	//glm::vec3 scale = glm::vec3(27.6f);
@@ -72,12 +75,19 @@ class TerrainChunk {
 public:
 	vks::HeightMap* heightMap = nullptr;
 	glm::ivec2 position;
+	glm::vec3 center;
 	int size;
 	bool hasValidMesh = false;
+	bool visible = false;
 	
 	TerrainChunk(glm::ivec2 coords, int size) : size(size) {
 		position = coords;// *size;
-		glm::vec3 positionV3 = glm::vec3(position.x, 0.0f, position.y);
+		//center = glm::vec3((float)coords.x * (float)size / 2.0f, 0.0f, (float)coords.y * (float)size / 2.0f);
+		center = glm::vec3(0.0f);
+		center.x = (float)coords.x * (float)size;
+		center.z = (float)coords.y * (float)size;
+		center.x += coords.x < 0 ? +(float)size / 2.0f : -(float)size / 2.0f;
+		center.y += coords.y < 0 ? +(float)size / 2.0f : -(float)size / 2.0f;
 		heightMap = new vks::HeightMap(defaultDevice, transferQueue);
 	};
 
@@ -139,6 +149,25 @@ public:
 		return false;
 	}
 
+	TerrainChunk* getChunk(glm::ivec2 coords) {
+		for (auto& chunk : terrainChunks) {
+			if (chunk->position.x == coords.x && chunk->position.y == coords.y) {
+				return chunk;
+			}
+		}
+		return nullptr;
+	}
+
+	int getVisibleChunkCount() {
+		int count = 0;
+		for (auto& chunk : terrainChunks) {
+			if (chunk->visible) {
+				count++;
+			}
+		}
+		return count;
+	}
+
 	bool updateVisibleChunks() {
 		bool res = false;
 		int currentChunkCoordX = (int)round(viewerPosition.x / (float)chunkSize);
@@ -147,14 +176,15 @@ public:
 			for (int xOffset = -chunksVisibleInViewDistance; xOffset <= chunksVisibleInViewDistance; xOffset++) {
 				glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
 				if (chunkPresent(viewedChunkCoord)) {
-					//
+					TerrainChunk* chunk = getChunk(viewedChunkCoord);
+					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize);
 				} else {
 					int l = heightmapSettings.levelOfDetail;
 					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
 					terrainChunks.push_back(newChunk);
 					terrainChunkgsUpdateList.push_back(newChunk);
 					heightmapSettings.levelOfDetail = l;
-					//std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
+					std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
 					res = true;
 				}
 			}
@@ -182,6 +212,7 @@ public:
 	bool displayWaterPlane = true;
 	bool displayWireFrame = false;
 	bool renderShadows = false;
+	bool fixFrustum = false;
 
 	//vks::HeightMap* heightMap;
 	InfiniteTerrain infiniteTerrain;
@@ -609,8 +640,6 @@ public:
 		cb->updatePushConstant(pipelineLayouts.sky, 0, &pushConst);
 		models.skysphere.draw(cb->handle);
 		
-		const float chunkDim = 241.0f;// *1.25f;
-
 		// Terrain
 		if (displayWireFrame) {
 			cb->bindPipeline(pipelines.wireframe);
@@ -620,9 +649,11 @@ public:
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
 		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
-			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-			terrainChunk->draw(cb);
+			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+				terrainChunk->draw(cb);
+			}
 		}
 
 		// Water
@@ -630,7 +661,7 @@ public:
 			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
 			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.water);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-				if (terrainChunk->hasValidMesh) {
+				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
 					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 					models.plane.draw(cb->handle);
@@ -641,7 +672,6 @@ public:
 	}
 
 	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
-		const float chunkDim = 241.0f;// *1.25f;
 		CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
 		cb->bindPipeline(pipelines.depthpass);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
@@ -1016,7 +1046,7 @@ public:
 	// Generate a terrain quad patch for feeding to the tessellation control shader
 	void generateTerrain()
 	{
-		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, -camera.position.z);
+		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
 		infiniteTerrain.updateVisibleChunks();
 	}
 
@@ -1402,6 +1432,10 @@ public:
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
 
+		if (!fixFrustum) {
+			frustum.update(camera.matrices.perspective * camera.matrices.view);
+		}
+
 		// Mesh
 		memcpy(uniformBuffers.vsShared.mapped, &uboShared, sizeof(uboShared));
 
@@ -1521,7 +1555,7 @@ public:
 		updateUniformBuffers();
 		updateUniformBufferOffscreen();
 		// @todo
-		infiniteTerrain.viewerPosition = glm::vec2(-camera.position.x, -camera.position.z);
+		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
 		// @todo
 		if (infiniteTerrain.updateVisibleChunks()) {
 			buildCommandBuffers();
@@ -1532,6 +1566,9 @@ public:
 	{
 		bool updateTerrain = false;
 		if (overlay->header("Debugging")) {
+			if (overlay->checkBox("Fix frustum", &fixFrustum)) {
+				buildCommandBuffers();
+			}
 			if (overlay->checkBox("Wireframe", &displayWireFrame)) {
 				buildCommandBuffers();
 			}
@@ -1572,13 +1609,14 @@ public:
 			}
 		}
 		if (overlay->header("Terrain")) {
-			overlay->text("%d chunks", infiniteTerrain.terrainChunks.size());
+			overlay->text("%d chunks in memory", infiniteTerrain.terrainChunks.size());
+			overlay->text("%d chunks visible", infiniteTerrain.getVisibleChunkCount());
 		}
-		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
 
 		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightmapSettings.mapChunkSize - 1));
 		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightmapSettings.mapChunkSize - 1));
 		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
+		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
 
 		//if (overlay->header("Terrain layers")) {
 		//	for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
