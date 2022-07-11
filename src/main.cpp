@@ -213,6 +213,14 @@ public:
 	bool displayWireFrame = false;
 	bool renderShadows = false;
 	bool fixFrustum = false;
+	bool hasExtMemoryBudget = false;
+
+	struct MemoryBudget {
+		int heapCount;
+		VkDeviceSize heapBudget[VK_MAX_MEMORY_HEAPS];
+		VkDeviceSize heapUsage[VK_MAX_MEMORY_HEAPS];
+		std::chrono::time_point<std::chrono::high_resolution_clock> lastUpdate;
+	} memoryBudget{};
 
 	//vks::HeightMap* heightMap;
 	InfiniteTerrain infiniteTerrain;
@@ -439,6 +447,9 @@ public:
 		// Spawn background thread that creates newly visible terrain chunkgs
 		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
 		backgroundLoadingThread.detach();
+
+		apiVersion = VK_API_VERSION_1_1;
+		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 	}
 
 	~VulkanExample()
@@ -1428,6 +1439,8 @@ public:
 			transferQueue = queue;
 		}
 
+		hasExtMemoryBudget = vulkanDevice->extensionSupported("VK_EXT_memory_budget");
+
 		loadAssets();
 		generateTerrain();
 		prepareOffscreen();
@@ -1509,6 +1522,20 @@ public:
 		cb->end();
 	}
 
+	void updateMemoryBudgets() {
+		if (std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - memoryBudget.lastUpdate).count() > 1000) {
+			VkPhysicalDeviceMemoryBudgetPropertiesEXT physicalDeviceMemoryBudgetPropertiesEXT{};
+			physicalDeviceMemoryBudgetPropertiesEXT.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+			VkPhysicalDeviceMemoryProperties2 physicalDeviceMemoryProperties2{};
+			physicalDeviceMemoryProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+			physicalDeviceMemoryProperties2.pNext = &physicalDeviceMemoryBudgetPropertiesEXT;
+			vkGetPhysicalDeviceMemoryProperties2(vulkanDevice->physicalDevice, &physicalDeviceMemoryProperties2);
+			memoryBudget.heapCount = physicalDeviceMemoryProperties2.memoryProperties.memoryHeapCount;
+			memcpy(memoryBudget.heapBudget, physicalDeviceMemoryBudgetPropertiesEXT.heapBudget, sizeof(VkDeviceSize) * VK_MAX_MEMORY_HEAPS);
+			memcpy(memoryBudget.heapUsage, physicalDeviceMemoryBudgetPropertiesEXT.heapUsage, sizeof(VkDeviceSize) * VK_MAX_MEMORY_HEAPS);
+		}
+	}
+
 	virtual void render()
 	{
 		if (!prepared) {
@@ -1534,6 +1561,7 @@ public:
 			updateUniformBuffers();
 			updateUniformBufferOffscreen();
 		}
+		updateMemoryBudgets();
 	}
 
 	virtual void viewChanged()
@@ -1548,21 +1576,69 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
 		bool updateTerrain = false;
-		if (overlay->header("Debugging")) {
-			overlay->checkBox("Fix frustum", &fixFrustum);
-			overlay->checkBox("Wireframe", &displayWireFrame);
-			overlay->checkBox("Waterplane", &displayWaterPlane);
-			overlay->checkBox("Display reflection", &debugDisplayReflection);
-			overlay->checkBox("Display refraction", &debugDisplayRefraction);
-			overlay->checkBox("Display cascades", &cascadeDebug.enabled);
-			if (cascadeDebug.enabled) {
-				overlay->sliderInt("Cascade", &cascadeDebug.cascadeIndex, 0, SHADOW_MAP_CASCADE_COUNT - 1);
-			}
-			if (overlay->sliderFloat("Split lambda", &cascadeSplitLambda, 0.1f, 1.0f)) {
-				updateCascades();
-				updateUniformBuffers();
+
+		/*ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+		ImGui::SetNextWindowPos(ImVec2(10, 10));
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Vulkan Example", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+		ImGui::TextUnformatted(title.c_str());
+		ImGui::TextUnformatted(deviceProperties.deviceName);
+		ImGui::Text("%.2f ms/frame (%.1d fps)", (1000.0f / lastFPS), lastFPS);
+
+	#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 5.0f * UIOverlay.scale));
+	#endif
+		ImGui::PushItemWidth(110.0f * UIOverlay.scale);
+		OnUpdateUIOverlay(&UIOverlay);
+		ImGui::PopItemWidth();
+	#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+		ImGui::PopStyleVar();
+	#endif*/
+
+		ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Performance", nullptr, ImGuiWindowFlags_None);
+		ImGui::TextUnformatted(deviceProperties.deviceName);
+		ImGui::Text("%.2f ms/frame (%.1d fps)", (1000.0f / lastFPS), lastFPS);
+		if (overlay->header("Memory")) {
+			for (int i = 0; i < memoryBudget.heapCount; i++) {
+				const float divisor = 1024.0f * 1024.0f;
+				ImGui::Text("Heap %i: %.2f / %.2f", i, (float)memoryBudget.heapUsage[i] / divisor, (float)memoryBudget.heapBudget[i] / divisor);
 			}
 		}
+		ImGui::End();
+
+		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Debugging", nullptr, ImGuiWindowFlags_None);
+		overlay->checkBox("Fix frustum", &fixFrustum);
+		overlay->checkBox("Wireframe", &displayWireFrame);
+		overlay->checkBox("Waterplane", &displayWaterPlane);
+		overlay->checkBox("Display reflection", &debugDisplayReflection);
+		overlay->checkBox("Display refraction", &debugDisplayRefraction);
+		overlay->checkBox("Display cascades", &cascadeDebug.enabled);
+		if (cascadeDebug.enabled) {
+			overlay->sliderInt("Cascade", &cascadeDebug.cascadeIndex, 0, SHADOW_MAP_CASCADE_COUNT - 1);
+		}
+		if (overlay->sliderFloat("Split lambda", &cascadeSplitLambda, 0.1f, 1.0f)) {
+			updateCascades();
+			updateUniformBuffers();
+		}
+		ImGui::End();
+
+		ImGui::SetNextWindowPos(ImVec2(30, 30), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Terrain", nullptr, ImGuiWindowFlags_None);
+		overlay->text("%d chunks in memory", infiniteTerrain.terrainChunks.size());
+		overlay->text("%d chunks visible", infiniteTerrain.getVisibleChunkCount());
+		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightmapSettings.mapChunkSize - 1));
+		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightmapSettings.mapChunkSize - 1));
+		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
+		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
+		ImGui::End();
+
+
+		/*
 		if (overlay->header("Heightmap")) {
 			bool settingChanged = false;
 			settingChanged = overlay->sliderInt("Seed", &heightmapSettings.seed, 0, 128);
@@ -1578,14 +1654,9 @@ public:
 			}
 		}
 		if (overlay->header("Terrain")) {
-			overlay->text("%d chunks in memory", infiniteTerrain.terrainChunks.size());
-			overlay->text("%d chunks visible", infiniteTerrain.getVisibleChunkCount());
 		}
 
-		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightmapSettings.mapChunkSize - 1));
-		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightmapSettings.mapChunkSize - 1));
-		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
-		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
+		*/
 
 		//if (overlay->header("Terrain layers")) {
 		//	for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
@@ -1598,6 +1669,13 @@ public:
 		//	buildCommandBuffers();
 		//}
 	}
+
+	virtual void mouseMoved(double x, double y, bool& handled)
+	{
+		ImGuiIO& io = ImGui::GetIO();
+		handled = io.WantCaptureMouse;
+	}
+
 };
 
 VULKAN_EXAMPLE_MAIN()

@@ -579,7 +579,7 @@ void VulkanExampleBase::updateOverlay()
 
 	ImGui::NewFrame();
 
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+	/*ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
 	ImGui::SetNextWindowPos(ImVec2(10, 10));
 	ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 	ImGui::Begin("Vulkan Example", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
@@ -591,14 +591,16 @@ void VulkanExampleBase::updateOverlay()
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 5.0f * UIOverlay.scale));
 #endif
 	ImGui::PushItemWidth(110.0f * UIOverlay.scale);
+*/
 	OnUpdateUIOverlay(&UIOverlay);
+/*
 	ImGui::PopItemWidth();
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
 	ImGui::PopStyleVar();
-#endif
+#endif*/
 
-	ImGui::End();
-	ImGui::PopStyleVar();
+	//ImGui::End();
+	//ImGui::PopStyleVar();
 	ImGui::Render();
 
 	if (UIOverlay.update() || UIOverlay.updated) {
