@@ -22,7 +22,7 @@
 #include <vulkan/vulkan.h>
 #include "vulkanexamplebase.h"
 #include "VulkanTexture.hpp"
-#include "VulkanglTFModel.hpp"
+#include "VulkanglTFModel.h"
 #include "VulkanBuffer.hpp"
 #include "VulkanHeightmap.hpp"
 
@@ -1170,17 +1170,11 @@ public:
 		vertexInputState.pVertexAttributeDescriptions = vertexInputAttributes.data();
 
 		// glTF models
-		const VkVertexInputBindingDescription vertexInputBindingModel = vks::initializers::vertexInputBindingDescription(0, sizeof(vkglTF::Model::Vertex), VK_VERTEX_INPUT_RATE_VERTEX);
-		const std::vector<VkVertexInputAttributeDescription> vertexInputAttributesModel = {
-			vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vkglTF::Model::Vertex, pos)),
-			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vkglTF::Model::Vertex, normal)),
-			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, offsetof(vkglTF::Model::Vertex, uv)),
-		};
-		VkPipelineVertexInputStateCreateInfo vertexInputStateModel = vks::initializers::pipelineVertexInputStateCreateInfo();
-		vertexInputStateModel.vertexBindingDescriptionCount = 1;
-		vertexInputStateModel.pVertexBindingDescriptions = &vertexInputBindingModel;
-		vertexInputStateModel.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributesModel.size());
-		vertexInputStateModel.pVertexAttributeDescriptions = vertexInputAttributesModel.data();
+		VkPipelineVertexInputStateCreateInfo* vertexInputStateModel = vkglTF::Vertex::getPipelineVertexInputState({
+			vkglTF::VertexComponent::Position, 
+			vkglTF::VertexComponent::Normal, 
+			vkglTF::VertexComponent::UV 
+		});
 
 		// Empty state (no input)
 		VkPipelineVertexInputStateCreateInfo vertexInputStateEmpty = vks::initializers::pipelineVertexInputStateCreateInfo();
@@ -1226,7 +1220,7 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelines.water = new Pipeline(device);
 		pipelines.water->setCreateInfo(pipelineCI);
-		pipelines.water->setVertexInputState(&vertexInputStateModel);
+		pipelines.water->setVertexInputState(vertexInputStateModel);
 		pipelines.water->setCache(pipelineCache);
 		pipelines.water->setLayout(pipelineLayouts.textured);
 		pipelines.water->setRenderPass(renderPass);
@@ -1236,7 +1230,7 @@ public:
 		// Offscreen
 		pipelines.waterOffscreen = new Pipeline(device);
 		pipelines.waterOffscreen->setCreateInfo(pipelineCI);
-		pipelines.waterOffscreen->setVertexInputState(&vertexInputStateModel);
+		pipelines.waterOffscreen->setVertexInputState(vertexInputStateModel);
 		pipelines.waterOffscreen->setCache(pipelineCache);
 		pipelines.waterOffscreen->setLayout(pipelineLayouts.textured);
 		pipelines.waterOffscreen->setRenderPass(offscreenPass.renderPass);
@@ -1285,7 +1279,7 @@ public:
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		pipelines.sky = new Pipeline(device);
 		pipelines.sky->setCreateInfo(pipelineCI);
-		pipelines.sky->setVertexInputState(&vertexInputStateModel);
+		pipelines.sky->setVertexInputState(vertexInputStateModel);
 		pipelines.sky->setCache(pipelineCache);
 		pipelines.sky->setLayout(pipelineLayouts.sky);
 		pipelines.sky->setRenderPass(renderPass);
@@ -1295,7 +1289,7 @@ public:
 		// Offscreen
 		pipelines.skyOffscreen = new Pipeline(device);
 		pipelines.skyOffscreen->setCreateInfo(pipelineCI);
-		pipelines.skyOffscreen->setVertexInputState(&vertexInputStateModel);
+		pipelines.skyOffscreen->setVertexInputState(vertexInputStateModel);
 		pipelines.skyOffscreen->setCache(pipelineCache);
 		pipelines.skyOffscreen->setLayout(pipelineLayouts.sky);
 		pipelines.skyOffscreen->setRenderPass(offscreenPass.renderPass);
