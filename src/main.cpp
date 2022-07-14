@@ -62,7 +62,7 @@ struct HeightMapSettings {
 	int seed = 0;
 	uint32_t width = 100;
 	uint32_t height = 100;
-	float heightScale = 38.0f;
+	float heightScale = 38.0f * 0.75f; // @todo
 	uint32_t octaves = 4;
 	float persistence = 0.5f;
 	float lacunarity = 1.87f;
@@ -177,7 +177,7 @@ public:
 				glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
 				if (chunkPresent(viewedChunkCoord)) {
 					TerrainChunk* chunk = getChunk(viewedChunkCoord);
-					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize);
+					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize); // @todo: + 1?
 				} else {
 					int l = heightmapSettings.levelOfDetail;
 					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
@@ -249,10 +249,11 @@ public:
 		Pipeline* skyOffscreen;
 		Pipeline* depthpass;
 		Pipeline* wireframe;
+		Pipeline* tree;
+		Pipeline* treeOffscreen;
 	} pipelines;
 
 	struct Textures {
-		vks::Texture2D heightMap;
 		vks::Texture2D skySphere;
 		vks::Texture2D waterNormalMap;
 		vks::Texture2DArray terrainArray;
@@ -261,9 +262,11 @@ public:
 	std::vector<vks::Texture2D> skyspheres;
 	int32_t skysphereIndex;
 
+	// @todo: add some kind of basic asset manager
 	struct Models {
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
+		vkglTF::Model tree;
 	} models;
 
 	struct {
@@ -304,11 +307,18 @@ public:
 		float time;
 	} uboWaterPlane;
 
+	struct InstanceData {
+		glm::vec3 pos;
+	};
+	// @todo: buffer per terrain tile
+	vks::Buffer instanceBuffer;
+
 	struct {
 		PipelineLayout* debug;
 		PipelineLayout* textured;
 		PipelineLayout* terrain;
 		PipelineLayout* sky;
+		PipelineLayout* tree;
 	} pipelineLayouts;
 
 	DescriptorPool* descriptorPool;
@@ -318,12 +328,16 @@ public:
 		DescriptorSet* debugquad;
 		DescriptorSet* terrain;
 		DescriptorSet* skysphere;
+		DescriptorSet* sceneMatrices;
 	} descriptorSets;
 
 	struct {
 		DescriptorSetLayout* textured;
 		DescriptorSetLayout* terrain;
 		DescriptorSetLayout* skysphere;
+		// @todo
+		DescriptorSetLayout* ubo;
+		DescriptorSetLayout* images;
 	} descriptorSetLayouts;
 
 	// Framebuffer for offscreen rendering
@@ -439,10 +453,18 @@ public:
 		uboTerrain.layers[4] = glm::vec4(117.5f, 45.0f, glm::vec2(0.0));
 		uboTerrain.layers[5] = glm::vec4(165.0f, 50.0f, glm::vec2(0.0));
 
-		for (auto& layer : uboTerrain.layers) {
-			layer.x /= 165.f;
-			layer.y /= 165.f;
-		}
+		//for (auto& layer : uboTerrain.layers) {
+		//	layer.x /= 165.f;
+		//	layer.y /= 165.f;
+		//}
+
+		uboTerrain.layers[0] = glm::vec4(0.038f, 0.013f, glm::vec2(0.0));
+		uboTerrain.layers[1] = glm::vec4(0.0f,   0.213f, glm::vec2(0.0));
+		uboTerrain.layers[2] = glm::vec4(0.266f, 0.212f, glm::vec2(0.0));
+		uboTerrain.layers[3] = glm::vec4(0.530f, 0.152f, glm::vec2(0.0));
+		uboTerrain.layers[4] = glm::vec4(0.712f, 0.273f, glm::vec2(0.0));
+		uboTerrain.layers[5] = glm::vec4(0.696f, 0.303f, glm::vec2(0.0));
+
 
 		// Spawn background thread that creates newly visible terrain chunkgs
 		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
@@ -622,6 +644,8 @@ public:
 
 	void drawScene(CommandBuffer* cb, SceneDrawType drawType)
 	{
+		// @todo: lower draw distance for reflection and refraction
+
 		// @todo: rename to localMat
 		struct PushConst {
 			glm::mat4 scale = glm::mat4(1.0f);
@@ -650,7 +674,7 @@ public:
 		cb->bindDescriptorSets(pipelineLayouts.sky, { descriptorSets.skysphere }, 0);
 		cb->updatePushConstant(pipelineLayouts.sky, 0, &pushConst);
 		models.skysphere.draw(cb->handle);
-		
+
 		// Terrain
 		if (displayWireFrame) {
 			cb->bindPipeline(pipelines.wireframe);
@@ -680,6 +704,17 @@ public:
 			}
 		}
 
+		// Trees
+		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
+			VkDeviceSize offsets[1] = { 0 };
+			vkCmdBindVertexBuffers(cb->handle, 1, 1, &instanceBuffer.buffer, offsets);
+			// @todo: offset pos by waterplane? also needed for terrain?
+			cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
+			cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
+			glm::vec3 pos = glm::vec3(0.0f, 16.0f * 0.0f, 0.0f);
+			cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+			models.tree.draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, 24 * 24);
+		}
 	}
 
 	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
@@ -691,7 +726,7 @@ public:
 			pushConst.position = glm::vec4(pos, 0.0f);
 			cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
 			//vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-			terrainChunk->draw(cb);
+			//terrainChunk->draw(cb);
 		}
 	}
 
@@ -930,28 +965,15 @@ public:
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
-				
+		//models.tree.loadFromFile(getAssetPath() + "scenes/trees/spruce/spruce.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
+		models.tree.loadFromFile(getAssetPath() + "scenes/trees/pine/pine.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
+		//models.tree.loadFromFile(getAssetPath() + "scenes/trees/fir/fir.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
+
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
-		textures.heightMap.loadFromFile(getAssetPath() + "heightmap.ktx", VK_FORMAT_R16_UNORM, vulkanDevice, queue);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 
 		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
-
-		// Setup a mirroring sampler for the height map
-		vkDestroySampler(device, textures.heightMap.sampler, nullptr);
-		samplerInfo.magFilter = VK_FILTER_LINEAR;
-		samplerInfo.minFilter = VK_FILTER_LINEAR;
-		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-		samplerInfo.addressModeV = samplerInfo.addressModeU;
-		samplerInfo.addressModeW = samplerInfo.addressModeU;
-		samplerInfo.compareOp = VK_COMPARE_OP_NEVER;
-		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = (float)textures.heightMap.mipLevels;
-		samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-		VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &textures.heightMap.sampler));
-		textures.heightMap.descriptor.sampler = textures.heightMap.sampler;
 
 		// Setup a repeating sampler for the terrain texture layers
 		// @todo: Sampler class, that can e.g. check against device if anisotropy > max and then lower it
@@ -1038,6 +1060,22 @@ public:
 		pipelineLayouts.terrain->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.terrain->create();
 
+		// Trees (@todo: glTF models in general)
+		descriptorSetLayouts.ubo = new DescriptorSetLayout(device);
+		descriptorSetLayouts.ubo->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.ubo->create();
+
+		// @todo: remove
+		descriptorSetLayouts.images = new DescriptorSetLayout(device);
+		descriptorSetLayouts.images->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.images->create();
+
+		pipelineLayouts.tree = new PipelineLayout(device);
+		pipelineLayouts.tree->addLayout(descriptorSetLayouts.ubo);
+		pipelineLayouts.tree->addLayout(vkglTF::descriptorSetLayoutImage);
+		pipelineLayouts.tree->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		pipelineLayouts.tree->create();
+
 		// Skysphere
 		descriptorSetLayouts.skysphere = new DescriptorSetLayout(device);
 		descriptorSetLayouts.skysphere->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT);
@@ -1100,7 +1138,7 @@ public:
 		descriptorSets.terrain->setPool(descriptorPool);
 		descriptorSets.terrain->addLayout(descriptorSetLayouts.terrain);
 		descriptorSets.terrain->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.terrain.descriptor);
-		descriptorSets.terrain->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.heightMap.descriptor);
+		descriptorSets.terrain->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
 		descriptorSets.terrain->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
 		descriptorSets.terrain->addDescriptor(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
 		descriptorSets.terrain->addDescriptor(4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
@@ -1113,6 +1151,13 @@ public:
 		descriptorSets.skysphere->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.sky.descriptor);
 		descriptorSets.skysphere->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.skySphere.descriptor);
 		descriptorSets.skysphere->create();
+
+		// @todo
+		descriptorSets.sceneMatrices = new DescriptorSet(device);
+		descriptorSets.sceneMatrices->setPool(descriptorPool);
+		descriptorSets.sceneMatrices->addLayout(descriptorSetLayouts.ubo);
+		descriptorSets.sceneMatrices->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsShared.descriptor);
+		descriptorSets.sceneMatrices->create();
 
 		// Shadow map cascades (one set per cascade)
 		// @todo: Doesn't make sense, all refer to same depth
@@ -1175,6 +1220,27 @@ public:
 			vkglTF::VertexComponent::Normal, 
 			vkglTF::VertexComponent::UV 
 		});
+
+		// Instanced
+		VkPipelineVertexInputStateCreateInfo vertexInputStateModelInstanced = vks::initializers::pipelineVertexInputStateCreateInfo();
+		std::vector<VkVertexInputBindingDescription> bindingDescriptions;
+		std::vector<VkVertexInputAttributeDescription> attributeDescriptions;
+
+		bindingDescriptions = {
+			vks::initializers::vertexInputBindingDescription(0, sizeof(vkglTF::Vertex), VK_VERTEX_INPUT_RATE_VERTEX),
+			vks::initializers::vertexInputBindingDescription(1, sizeof(InstanceData), VK_VERTEX_INPUT_RATE_INSTANCE)
+		};
+
+		attributeDescriptions = {
+			vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0),
+			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3),
+			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, sizeof(float) * 6),
+			vks::initializers::vertexInputAttributeDescription(1, 3, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos)),
+		};
+		vertexInputStateModelInstanced.pVertexBindingDescriptions = bindingDescriptions.data();
+		vertexInputStateModelInstanced.pVertexAttributeDescriptions = attributeDescriptions.data();
+		vertexInputStateModelInstanced.vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescriptions.size());
+		vertexInputStateModelInstanced.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
 
 		// Empty state (no input)
 		VkPipelineVertexInputStateCreateInfo vertexInputStateEmpty = vks::initializers::pipelineVertexInputStateCreateInfo();
@@ -1297,7 +1363,42 @@ public:
 		pipelines.skyOffscreen->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
 		pipelines.skyOffscreen->create();
 
+		// Trees
+		rasterizationState.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthWriteEnable = VK_TRUE;
+
+		blendAttachmentState.blendEnable = VK_TRUE;
+		blendAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		blendAttachmentState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+		blendAttachmentState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		blendAttachmentState.colorBlendOp = VK_BLEND_OP_ADD;
+		blendAttachmentState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		blendAttachmentState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		blendAttachmentState.alphaBlendOp = VK_BLEND_OP_ADD;
+
+		pipelines.tree = new Pipeline(device);
+		pipelines.tree->setCreateInfo(pipelineCI);
+		pipelines.tree->setVertexInputState(&vertexInputStateModelInstanced);
+		pipelines.tree->setCache(pipelineCache);
+		pipelines.tree->setLayout(pipelineLayouts.tree);
+		pipelines.tree->setRenderPass(renderPass);
+		pipelines.tree->addShader(getAssetPath() + "shaders/tree.vert.spv");
+		pipelines.tree->addShader(getAssetPath() + "shaders/tree.frag.spv");
+		pipelines.tree->create();
+		// Offscreen
+		pipelines.treeOffscreen = new Pipeline(device);
+		pipelines.treeOffscreen->setCreateInfo(pipelineCI);
+		pipelines.treeOffscreen->setVertexInputState(&vertexInputStateModelInstanced);
+		pipelines.treeOffscreen->setCache(pipelineCache);
+		pipelines.treeOffscreen->setLayout(pipelineLayouts.tree);
+		pipelines.treeOffscreen->setRenderPass(offscreenPass.renderPass);
+		pipelines.treeOffscreen->addShader(getAssetPath() + "shaders/tree.vert.spv");
+		pipelines.treeOffscreen->addShader(getAssetPath() + "shaders/tree.frag.spv");
+		pipelines.treeOffscreen->create();
+
+		depthStencilState.depthWriteEnable = VK_TRUE;
+		blendAttachmentState.blendEnable = VK_FALSE;
 
 		// Shadow map depth pass
 		colorBlendState.attachmentCount = 0;
@@ -1444,9 +1545,27 @@ public:
 		preparePipelines();
 		setupDescriptorPool();
 		setupDescriptorSet();
+		
 		// @todo
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
 		infiniteTerrain.updateVisibleChunks();
+		
+		// @todo
+		std::vector<InstanceData> instanceData;
+		const int dim = 24;
+		instanceData.resize(dim * dim);
+		std::uniform_real_distribution<float> uniformDist(0.0f, 1.0f);
+		for (int x = 0; x < dim; x++) {
+			for (int y = 0; y < dim; y++) {
+				instanceData[x + y * dim].pos = glm::vec3((float)x * 10.1f - 240.0f / 2.0f, 0.0f, (float)y * 10.1f - 240.0f / 2.0f);
+			}
+		}
+		vks::Buffer stagingBuffer;
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &instanceBuffer, stagingBuffer.size));
+		vulkanDevice->copyBuffer(&stagingBuffer, &instanceBuffer, queue);
+		stagingBuffer.destroy();
+
 		prepared = true;
 	}
 
@@ -1631,6 +1750,14 @@ public:
 		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
 		ImGui::End();
 
+		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Terrain layers", nullptr, ImGuiWindowFlags_None);
+		for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
+			overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 1.0f);
+		}
+		ImGui::End();
+
 
 		/*
 		if (overlay->header("Heightmap")) {
@@ -1647,21 +1774,8 @@ public:
 				updateHeightmap(false);
 			}
 		}
-		if (overlay->header("Terrain")) {
-		}
 
 		*/
-
-		//if (overlay->header("Terrain layers")) {
-		//	for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-		//		if (overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 200.0f)) {
-		//			updateTerrain = true;
-		//		}
-		//	}
-		//}
-			//if (overlay->sliderInt("Skysphere", &skysphereIndex, 0, skyspheres.size() - 1)) {
-		//	buildCommandBuffers();
-		//}
 	}
 
 	virtual void mouseMoved(double x, double y, bool& handled)

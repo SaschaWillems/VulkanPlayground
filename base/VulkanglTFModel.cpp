@@ -1415,7 +1415,7 @@ void vkglTF::Model::bindBuffers(VkCommandBuffer commandBuffer)
 	buffersBound = true;
 }
 
-void vkglTF::Model::drawNode(Node *node, VkCommandBuffer commandBuffer, uint32_t renderFlags, VkPipelineLayout pipelineLayout, uint32_t bindImageSet)
+void vkglTF::Model::drawNode(Node *node, VkCommandBuffer commandBuffer, uint32_t renderFlags, VkPipelineLayout pipelineLayout, uint32_t bindImageSet, uint32_t instanceCount)
 {
 	if (node->mesh) {
 		for (Primitive* primitive : node->mesh->primitives) {
@@ -1434,16 +1434,16 @@ void vkglTF::Model::drawNode(Node *node, VkCommandBuffer commandBuffer, uint32_t
 				if (renderFlags & RenderFlags::BindImages) {
 					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, bindImageSet, 1, &material.descriptorSet, 0, nullptr);
 				}
-				vkCmdDrawIndexed(commandBuffer, primitive->indexCount, 1, primitive->firstIndex, 0, 0);
+				vkCmdDrawIndexed(commandBuffer, primitive->indexCount, instanceCount, primitive->firstIndex, 0, 0);
 			}
 		}
 	}
 	for (auto& child : node->children) {
-		drawNode(child, commandBuffer, renderFlags);
+		drawNode(child, commandBuffer, renderFlags, pipelineLayout, bindImageSet, instanceCount);
 	}
 }
 
-void vkglTF::Model::draw(VkCommandBuffer commandBuffer, uint32_t renderFlags, VkPipelineLayout pipelineLayout, uint32_t bindImageSet)
+void vkglTF::Model::draw(VkCommandBuffer commandBuffer, uint32_t renderFlags, VkPipelineLayout pipelineLayout, uint32_t bindImageSet, uint32_t instanceCount)
 {
 	if (!buffersBound) {
 		const VkDeviceSize offsets[1] = {0};
@@ -1451,7 +1451,7 @@ void vkglTF::Model::draw(VkCommandBuffer commandBuffer, uint32_t renderFlags, Vk
 		vkCmdBindIndexBuffer(commandBuffer, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
 	}
 	for (auto& node : nodes) {
-		drawNode(node, commandBuffer, renderFlags, pipelineLayout, bindImageSet);
+		drawNode(node, commandBuffer, renderFlags, pipelineLayout, bindImageSet, instanceCount);
 	}
 }
 
