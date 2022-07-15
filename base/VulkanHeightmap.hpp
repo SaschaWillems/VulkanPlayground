@@ -34,11 +34,10 @@ namespace vks
 		vks::VulkanDevice *device = nullptr;
 		VkQueue copyQueue = VK_NULL_HANDLE;
 
+	public:
 		static constexpr const int chunkSize = 241;
 		// Height data also contains info on neighbouring borders to properly calculate normals
 		float heights[chunkSize + 2][chunkSize + 2];
-
-	public:
 		enum Topology { topologyTriangles, topologyQuads };
 
 		float heightScale = 4.0f;
@@ -92,12 +91,22 @@ namespace vks
 
 		float getHeight(uint32_t x, uint32_t y)
 		{
-			glm::ivec2 rpos = glm::ivec2(x, y) * glm::ivec2(scale);
-			rpos.x = std::max(0, std::min(rpos.x, (int)chunkSize - 1));
-			rpos.y = std::max(0, std::min(rpos.y, (int)chunkSize - 1));
-			rpos /= glm::ivec2(scale);
-			float height = heights[rpos.x][rpos.y] * scale * heightScale;
+			if (x < 0) { x = 0; }
+			if (y < 0) { y = 0; }
+			if (x > chunkSize + 1) { x = chunkSize + 1; }
+			if (y > chunkSize + 1) { y = chunkSize + 1; }
+			float height = heights[x][y] * abs(heightScale);
+			if (height < 0.0f) {
+				height = 0.0f;
+			}
 			return height;
+
+			//glm::ivec2 rpos = glm::ivec2(x, y) * glm::ivec2(scale);
+			//rpos.x = std::max(0, std::min(rpos.x, (int)chunkSize - 1));
+			//rpos.y = std::max(0, std::min(rpos.y, (int)chunkSize - 1));
+			//rpos /= glm::ivec2(scale);
+			//float height = heights[rpos.x][rpos.y] * scale * heightScale;
+			//return height;
 		}
 
 		float inverseLerp(float xx, float yy, float value)
@@ -169,6 +178,10 @@ namespace vks
 					//data[x + y * texture.width] = data[x + y * texture.width] / 0.6;
 					//data[x + y * texture.width] = glm::clamp(data[x + y * texture.width], 0.0f, std::numeric_limits<float>::max());
 					heights[x][y] = inverseLerp(-3.0f, 0.6f, heights[x][y]);
+
+					if (heights[x][y] < 0.0f) {
+						heights[x][y] = 0.0f;
+					}
 				}
 			}
 		}
@@ -177,6 +190,7 @@ namespace vks
 		{
 			int meshDim = chunkSize;
 			this->meshDim = meshDim;
+			this->heightScale = -scale.y;
 			// @todo: heightcurve (see E06:LOD)
 			// @todo: two buffers, current and update, switch in cb once done (signal via flag)?
 
@@ -223,7 +237,7 @@ namespace vks
 					vertices[vertexIndex].pos.y = currentHeight;
 					vertices[vertexIndex].pos.z = topLeftZ - (float)y;
 					vertices[vertexIndex].pos *= scale;
-					vertices[vertexIndex].pos.y += 1.75f;
+					//vertices[vertexIndex].pos.y += 1.75f; // @todo
 					vertices[vertexIndex].uv = glm::vec2((float)x / (float)meshDim, (float)y / (float)meshDim);
 					vertices[vertexIndex].terrainHeight = currentHeight;
 

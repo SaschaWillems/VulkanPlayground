@@ -33,7 +33,7 @@ void main(void)
 	outUV = inUV;
 	vec4 pos = vec4(inPos, 1.0);
 	//pos.xyz += pushConsts.pos.xyz;
-	pos.xyz += instancePos;
+	pos.xyz += instancePos + pushConsts.pos;
 	if (pushConsts.scale[1][1] < 0) {
 		pos.y *= -1.0f;
 	}

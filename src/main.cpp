@@ -55,6 +55,7 @@ VkQueue defaultQueue;
 VkQueue transferQueue;
 vks::Frustum frustum;
 const float chunkDim = 241.0f;
+float waterPosition = 1.75f;
 
 struct HeightMapSettings {
 	//glm::vec3 scale = glm::vec3(27.6f);
@@ -71,14 +72,20 @@ struct HeightMapSettings {
 	int levelOfDetail = 1;
 } heightmapSettings;
 
+struct InstanceData {
+	glm::vec3 pos;
+};
+
 class TerrainChunk {
 public:
 	vks::HeightMap* heightMap = nullptr;
+	vks::Buffer instanceBuffer;
 	glm::ivec2 position;
 	glm::vec3 center;
 	int size;
 	bool hasValidMesh = false;
 	bool visible = false;
+	int treeInstanceCount;
 	
 	TerrainChunk(glm::ivec2 coords, int size) : size(size) {
 		position = coords;// *size;
@@ -95,7 +102,7 @@ public:
 
 	}
 
-	void updateHeightMap () {
+	void updateHeightMap() {
 		assert(heightMap);
 		if (heightMap->vertexBuffer.buffer != VK_NULL_HANDLE) {
 			vkDestroyBuffer(defaultDevice->logicalDevice, heightMap->vertexBuffer.buffer, nullptr);
@@ -115,7 +122,50 @@ public:
 			vks::HeightMap::topologyTriangles,
 			heightmapSettings.levelOfDetail
 		);
-		hasValidMesh = true;
+	}
+
+	float getHeight(int x, int y) {
+		assert(heightMap);
+		return heightMap->getHeight(x, y);
+	}
+
+	void updateTrees() {
+		assert(heightMap);
+		// @todo
+		if (instanceBuffer.buffer != VK_NULL_HANDLE) {
+			return;
+		}
+		float topLeftX = (float)(vks::HeightMap::chunkSize - 1) / -2.0f;
+		float topLeftZ = (float)(vks::HeightMap::chunkSize - 1) / 2.0f;
+
+		std::vector<InstanceData> instanceData;
+		const int dim = 24; // 241
+		const int maxTreeCount = dim * dim; // @todo
+		std::uniform_real_distribution<float> uniformDist(0.0f, 1.0f);
+		for (int x = 0; x < dim; x++) {
+			for (int y = 0; y < dim; y++) {
+				const float f = 10.1f;
+				int terrainX = round((float)x * f);
+				int terrainY = round((float)y * f);
+				float h1 = getHeight(terrainX - 1, terrainY);
+				float h2 = getHeight(terrainX + 1, terrainY);
+				float h3 = getHeight(terrainX, terrainY - 1);
+				float h4 = getHeight(terrainX, terrainY + 1);
+				float h = (h1 + h2 + h3 + h4) / 4.0f;
+				if (h <= waterPosition) {
+					continue;
+				}
+				InstanceData inst{};
+				inst.pos = glm::vec3((float)topLeftX + (float)x * f, -h, topLeftZ - (float)y * f);
+				instanceData.push_back(inst);
+			}
+		}
+		treeInstanceCount = static_cast<uint32_t>(instanceData.size());
+		vks::Buffer stagingBuffer;
+		VK_CHECK_RESULT(defaultDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
+		VK_CHECK_RESULT(defaultDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &instanceBuffer, stagingBuffer.size));
+		defaultDevice->copyBuffer(&stagingBuffer, &instanceBuffer, transferQueue);
+		stagingBuffer.destroy();
 	}
 
 	void draw(CommandBuffer* cb) {
@@ -127,7 +177,7 @@ public:
 
 class InfiniteTerrain {
 public:
-	float maxViewDst = 300.0f;
+	float maxViewDst = 300.0f * 0.0f;
 	glm::vec2 viewerPosition;
 	int chunkSize;
 	int chunksVisibleInViewDistance;
@@ -199,6 +249,8 @@ public:
 			heightmapSettings.offset.x = (float)terrainChunk->position.x * (float)(chunkSize);
 			heightmapSettings.offset.y = (float)terrainChunk->position.y * (float)(chunkSize);
 			terrainChunk->updateHeightMap();
+			terrainChunk->updateTrees();
+			terrainChunk->hasValidMesh = true;
 			heightmapSettings.levelOfDetail = l;
 		}
 	}
@@ -307,12 +359,6 @@ public:
 		float time;
 	} uboWaterPlane;
 
-	struct InstanceData {
-		glm::vec3 pos;
-	};
-	// @todo: buffer per terrain tile
-	vks::Buffer instanceBuffer;
-
 	struct {
 		PipelineLayout* debug;
 		PipelineLayout* textured;
@@ -411,6 +457,8 @@ public:
 					heightmapSettings.offset.x = (float)chunk->position.x * (float)(chunk->size);
 					heightmapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
 					chunk->updateHeightMap();
+					chunk->updateTrees();
+					chunk->hasValidMesh = true;
 				}
 				std::cout << infiniteTerrain.terrainChunkgsUpdateList.size() << " Terrain chunks created\n";
 				infiniteTerrain.terrainChunkgsUpdateList.clear();
@@ -458,7 +506,7 @@ public:
 		//	layer.y /= 165.f;
 		//}
 
-		uboTerrain.layers[0] = glm::vec4(0.038f, 0.013f, glm::vec2(0.0));
+		uboTerrain.layers[0] = glm::vec4(0.038f, 0.038f, glm::vec2(0.0));
 		uboTerrain.layers[1] = glm::vec4(0.0f,   0.213f, glm::vec2(0.0));
 		uboTerrain.layers[2] = glm::vec4(0.266f, 0.212f, glm::vec2(0.0));
 		uboTerrain.layers[3] = glm::vec4(0.530f, 0.152f, glm::vec2(0.0));
@@ -658,11 +706,11 @@ public:
 
 		switch (drawType) {
 		case SceneDrawType::sceneDrawTypeRefract:
-			pushConst.clipPlane = glm::vec4(0.0, 1.0, 0.0, 0.0);
+			pushConst.clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, waterPosition);
 			pushConst.shadows = 0;
 			break;
 		case SceneDrawType::sceneDrawTypeReflect:
-			pushConst.clipPlane = glm::vec4(0.0, 1.0, 0.0, 0.0);
+			pushConst.clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, waterPosition);
 			pushConst.shadows = 0;
 			break;
 		}
@@ -686,6 +734,9 @@ public:
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
 				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
+					pos.y += waterPosition * 2.0f;
+				}
 				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 				terrainChunk->draw(cb);
 			}
@@ -697,7 +748,7 @@ public:
 			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.water);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
-					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, -waterPosition, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 1.0f, chunkDim - 1.0f);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 					models.plane.draw(cb->handle);
 				}
@@ -706,14 +757,22 @@ public:
 
 		// Trees
 		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
-			VkDeviceSize offsets[1] = { 0 };
-			vkCmdBindVertexBuffers(cb->handle, 1, 1, &instanceBuffer.buffer, offsets);
-			// @todo: offset pos by waterplane? also needed for terrain?
-			cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
-			cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
-			glm::vec3 pos = glm::vec3(0.0f, 16.0f * 0.0f, 0.0f);
-			cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
-			models.tree.draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, 24 * 24);
+			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+					VkDeviceSize offsets[1] = { 0 };
+					vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
+					// @todo: offset pos by waterplane? also needed for terrain?
+					cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
+					cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
+					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+					if (drawType == SceneDrawType::sceneDrawTypeReflect) {
+						pos.y += waterPosition * 2.0f;
+					}
+					cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+					models.tree.draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
+				}
+			}
 		}
 	}
 
@@ -725,7 +784,7 @@ public:
 			glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
 			pushConst.position = glm::vec4(pos, 0.0f);
 			cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
-			//vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 			//terrainChunk->draw(cb);
 		}
 	}
@@ -1550,22 +1609,6 @@ public:
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
 		infiniteTerrain.updateVisibleChunks();
 		
-		// @todo
-		std::vector<InstanceData> instanceData;
-		const int dim = 24;
-		instanceData.resize(dim * dim);
-		std::uniform_real_distribution<float> uniformDist(0.0f, 1.0f);
-		for (int x = 0; x < dim; x++) {
-			for (int y = 0; y < dim; y++) {
-				instanceData[x + y * dim].pos = glm::vec3((float)x * 10.1f - 240.0f / 2.0f, 0.0f, (float)y * 10.1f - 240.0f / 2.0f);
-			}
-		}
-		vks::Buffer stagingBuffer;
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &instanceBuffer, stagingBuffer.size));
-		vulkanDevice->copyBuffer(&stagingBuffer, &instanceBuffer, queue);
-		stagingBuffer.destroy();
-
 		prepared = true;
 	}
 

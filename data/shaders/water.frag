@@ -47,41 +47,7 @@ const mat4 biasMat = mat4(
 );
 
 #include "includes/fog.glsl"
-
-float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex)
-{
-	float shadow = 1.0;
-	float bias = 0.005;
-
-	if ( shadowCoord.z > -1.0 && shadowCoord.z < 1.0 ) {
-		float dist = texture(shadowMap, vec3(shadowCoord.st + offset, cascadeIndex)).r;
-		if (shadowCoord.w > 0 && dist < shadowCoord.z - bias) {
-			shadow = ambient;
-		}
-	}
-	return shadow;
-
-}
-
-float filterPCF(vec4 sc, uint cascadeIndex)
-{
-	ivec2 texDim = textureSize(shadowMap, 0).xy;
-	float scale = 0.75;
-	float dx = scale * 1.0 / float(texDim.x);
-	float dy = scale * 1.0 / float(texDim.y);
-
-	float shadowFactor = 0.0;
-	int count = 0;
-	int range = 1;
-	
-	for (int x = -range; x <= range; x++) {
-		for (int y = -range; y <= range; y++) {
-			shadowFactor += textureProj(sc, vec2(dx*x, dy*y), cascadeIndex);
-			count++;
-		}
-	}
-	return shadowFactor / count;
-}
+#include "includes/shadow.glsl"
 
 float shadowMapping()
 {
@@ -139,12 +105,14 @@ void main()
 
 	vec4 color = vec4(0.75, 0.75, 1.0, 1.0);
 	if (gl_FrontFacing) {
-		//float shadow = shadowMapping();
+//		float shadow = shadowMapping();
 		float shadow = 1.0;
 		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);// * (ambient + shadow) * waterColor;
 		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);// * (ambient + shadow);
-		color *= mix(refraction, reflection, fresnel);
+		color *= mix(refraction, reflection, fresnel * 1.25);
 	}
 
 	outFragColor = vec4(applyFog(color.rgb), 1.0);
+
+//	outFragColor = vec4(applyFog( texture(samplerReflection, vec2(projCoord)).rgb), 1.0);
 }

@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2022 by Sascha Willems - www.saschawillems.de
+ * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
+ */
+
 #version 450
 
 layout (location = 0) in vec3 inPos;
@@ -33,7 +38,6 @@ layout(push_constant) uniform PushConsts {
 void main(void)
 {
 	outUV = inUV;
-//	outUV.t = 1.0 - outUV.t;
 	outColor = inColor;
 	outNormal = inNormal;
 	vec4 pos = vec4(inPos, 1.0);
@@ -41,8 +45,6 @@ void main(void)
 	if (pushConsts.scale[1][1] < 0) {
 		pos.y *= -1.0f;
 	}
-	// @todo
-//	pos.y = 0.0;
 	gl_Position = ubo.projection * ubo.modelview * pos;
 	outPos = pos.xyz;
 	outViewVec = -pos.xyz;
@@ -57,4 +59,5 @@ void main(void)
 	} else {
 		gl_ClipDistance[0] = 0.0f;
 	}
+
 }

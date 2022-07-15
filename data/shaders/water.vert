@@ -37,7 +37,7 @@ void main()
 	outUV = inUV * 8.0f;
 	vec3 pos = inPos;
 	pos.xz *= 24.1 / 2.0;
-	pos.xz += pushConsts.pos.xz;
+	pos.xyz += pushConsts.pos.xyz;
 	outPos = ubo.projection * ubo.model * vec4(pos, 1.0);
 	outLPos = pos;
 	outNormal = inNormal;
