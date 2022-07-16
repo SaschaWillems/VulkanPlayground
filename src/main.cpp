@@ -61,12 +61,11 @@ const float chunkDim = 241.0f;
 float waterPosition = 1.75f;
 
 struct HeightMapSettings {
-	//glm::vec3 scale = glm::vec3(27.6f);
-	float noiseScale = 66.0f; // 27.6;
+	float noiseScale = 66.0f;
 	int seed = 54;
 	uint32_t width = 100;
 	uint32_t height = 100;
-	float heightScale = 38.0f * 0.75f; // @todo
+	float heightScale = 28.5f;
 	uint32_t octaves = 4;
 	float persistence = 0.5f;
 	float lacunarity = 1.87f;
@@ -151,8 +150,8 @@ struct HeightMapSettings {
 			if (settings.find(id + ".start") != settings.end()) {
 				textureLayers[i].x = settings[id + ".start"];
 			}
-			if (settings.find(id + ".end") != settings.end()) {
-				textureLayers[i].y = settings[id + ".end"];
+			if (settings.find(id + ".range") != settings.end()) {
+				textureLayers[i].y = settings[id + ".range"];
 			}
 		}
 
@@ -354,7 +353,7 @@ public:
 				glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
 				if (chunkPresent(viewedChunkCoord)) {
 					TerrainChunk* chunk = getChunk(viewedChunkCoord);
-					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize + 1.0f);
+					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize + 50.0f); // @todo
 				} else {
 					int l = heightmapSettings.levelOfDetail;
 					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
@@ -645,7 +644,7 @@ public:
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
 		//camera.setTranslation(glm::vec3(18.0f, 22.5f, 57.5f));
 		camera.setTranslation(glm::vec3(0.0f, 1.0f, -6.0f));
-		camera.movementSpeed = 7.5f * 10.0f;
+		camera.movementSpeed = 7.5f * 5.0f;
 		camera.rotationSpeed = 0.1f;
 		settings.overlay = true;
 		timerSpeed *= 0.05f;
@@ -668,26 +667,12 @@ public:
 		lightPos = glm::vec4(-20.0f, -15.0f, -15.0f, 0.0f) * radius;
 		uboTerrain.lightDir = glm::normalize(lightPos);
 
-		// Terrain layers (x = start, y = range)
-		uboTerrain.layers[0] = glm::vec4(12.5f, 45.0f, glm::vec2(0.0));
-		uboTerrain.layers[1] = glm::vec4(50.0f, 30.0f, glm::vec2(0.0));
-		uboTerrain.layers[2] = glm::vec4(62.5f, 35.0f, glm::vec2(0.0));
-		uboTerrain.layers[3] = glm::vec4(87.5f, 25.0f, glm::vec2(0.0));
-		uboTerrain.layers[4] = glm::vec4(117.5f, 45.0f, glm::vec2(0.0));
-		uboTerrain.layers[5] = glm::vec4(165.0f, 50.0f, glm::vec2(0.0));
-
-		//for (auto& layer : uboTerrain.layers) {
-		//	layer.x /= 165.f;
-		//	layer.y /= 165.f;
-		//}
-
 		uboTerrain.layers[0] = glm::vec4(0.038f, 0.038f, glm::vec2(0.0));
 		uboTerrain.layers[1] = glm::vec4(0.0f, 0.213f, glm::vec2(0.0));
 		uboTerrain.layers[2] = glm::vec4(0.266f, 0.212f, glm::vec2(0.0));
 		uboTerrain.layers[3] = glm::vec4(0.530f, 0.152f, glm::vec2(0.0));
 		uboTerrain.layers[4] = glm::vec4(0.712f, 0.273f, glm::vec2(0.0));
 		uboTerrain.layers[5] = glm::vec4(0.696f, 0.303f, glm::vec2(0.0));
-
 
 		// Spawn background thread that creates newly visible terrain chunkgs
 		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
@@ -699,6 +684,10 @@ public:
 		heightmapSettings.waterColor[0] = uboWaterPlane.color.r;
 		heightmapSettings.waterColor[1] = uboWaterPlane.color.g;
 		heightmapSettings.waterColor[2] = uboWaterPlane.color.b;
+
+#if defined(_WIN32)
+		ShowCursor(false);
+#endif
 	}
 
 	~VulkanExample()
@@ -1974,6 +1963,8 @@ public:
 		ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Performance", nullptr, ImGuiWindowFlags_None);
+		ImGui::TextUnformatted("Vulkan infinite terrain");
+		ImGui::TextUnformatted("2022 by Sascha Willems");
 		ImGui::TextUnformatted(deviceProperties.deviceName);
 		ImGui::Text("%.2f ms/frame (%.1d fps)", (1000.0f / lastFPS), lastFPS);
 		if (overlay->header("Memory")) {
