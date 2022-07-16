@@ -13,6 +13,9 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <map>
+#include <fstream>
+#include <sstream>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -73,6 +76,62 @@ struct HeightMapSettings {
 	int treeDensity = 30;
 	float minTreeSize = 0.75f;
 	float maxTreeSize = 1.5f;
+	int treeModelIndex = 2;
+	glm::vec4 textureLayers[TERRAIN_LAYER_COUNT];
+
+	void loadFromFile(const std::string filename) {
+		std::ifstream file;
+		file.open(filename);
+		assert(file.is_open());
+		std::string line;
+		std::string key;
+		float value;
+		std::map<std::string, float> settings{};
+		while (file.good()) {
+			getline(file, line);
+			std::istringstream ss(line);
+			ss >> key >> value;
+			settings[key] = value;
+		}
+		file.close();
+		if (settings.find("noiseScale") != settings.end()) {
+			noiseScale = settings["noiseScale"];
+		}
+		if (settings.find("seed") != settings.end()) {
+			seed = (int)settings["seed"];
+		}
+		if (settings.find("heightScale") != settings.end()) {
+			heightScale = settings["heightScale"];
+		}
+		if (settings.find("persistence") != settings.end()) {
+			persistence = settings["persistence"];
+		}
+		if (settings.find("persistence") != settings.end()) {
+			persistence = settings["persistence"];
+		}
+		if (settings.find("treeDensity") != settings.end()) {
+			treeDensity = (int)settings["treeDensity"];
+		}
+		if (settings.find("treeModelIndex") != settings.end()) {
+			treeModelIndex = (int)settings["treeModelIndex"];
+		}
+		if (settings.find("minTreeSize") != settings.end()) {
+			minTreeSize = settings["minTreeSize"];
+		}
+		if (settings.find("maxTreeSize") != settings.end()) {
+			maxTreeSize = settings["maxTreeSize"];
+		}
+		for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
+			const std::string id = "textureLayers[" + std::to_string(i) + "]";
+			if (settings.find(id + ".start") != settings.end()) {
+				textureLayers[i].x = settings[id + ".start"];
+			}
+			if (settings.find(id + ".end") != settings.end()) {
+				textureLayers[i].y = settings[id + ".end"];
+			}
+		}
+
+	}
 } heightmapSettings;
 
 struct InstanceData {
@@ -335,7 +394,12 @@ public:
 		"tropical/tropical.gltf",
 		"banana/banana.gltf"
 	};
-	int treeModelIndex = 2;
+
+	const std::vector<std::string> presets = {
+		"default",
+		"flat"
+	};
+	int32_t presetIndex = 0;
 
 	struct CascadeDebug {
 		bool enabled = false;
@@ -537,7 +601,7 @@ public:
 		//camera.setTranslation(glm::vec3(18.0f, 22.5f, 57.5f));
 		camera.setTranslation(glm::vec3(0.0f, 1.0f, -6.0f));
 		camera.movementSpeed = 7.5f * 10.0f;
-		camera.rotationSpeed = 0.25f;
+		camera.rotationSpeed = 0.1f;
 		settings.overlay = true;
 		timerSpeed *= 0.05f;
 
@@ -845,7 +909,7 @@ public:
 					}
 					cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-					models.trees[treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
+					models.trees[heightmapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
 				}
 			}
 		}
@@ -1915,13 +1979,19 @@ public:
 		overlay->sliderFloat("Height scale", &heightmapSettings.heightScale, 0.1f, 64.0f);
 		overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
 		overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
-		overlay->comboBox("Tree type", &treeModelIndex, treeModels);
+		overlay->comboBox("Tree type", &heightmapSettings.treeModelIndex, treeModels);
 		overlay->sliderInt("Tree density", &heightmapSettings.treeDensity, 1, 64);
 		overlay->sliderFloat("Min. tree size", &heightmapSettings.minTreeSize, 0.1f, heightmapSettings.maxTreeSize);
 		overlay->sliderFloat("Max. tree size", &heightmapSettings.maxTreeSize, heightmapSettings.minTreeSize, 5.0f);
 		//overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
 		if (overlay->button("Update heightmap")) {
 			updateHeightmap(false);
+		}
+		if (overlay->comboBox("Load preset", &presetIndex, presets)) {
+			heightmapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
+			for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
+				uboTerrain.layers[i] = heightmapSettings.textureLayers[i];
+			}
 		}
 		ImGui::End();
 	}
