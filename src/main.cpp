@@ -149,6 +149,7 @@ public:
 		std::default_random_engine prng(rndDevice());
 		std::uniform_real_distribution<float> distribution(0, (float)(vks::HeightMap::chunkSize - 1));
 		std::uniform_real_distribution<float> scaleDist(0.75f, 1.5f);
+		std::uniform_real_distribution<float> rotDist(0.0, 1.0);
 
 		for (int i = 0; i < maxTreeCount; i++) {
 			float xPos = distribution(prng);
@@ -166,6 +167,7 @@ public:
 			InstanceData inst{};
 			inst.pos = glm::vec3((float)topLeftX + xPos, -h, (float)topLeftZ - yPos);
 			inst.scale = glm::vec3(scaleDist(prng));
+			inst.rotation = glm::vec3(M_PI * rotDist(prng) * 0.035f, M_PI * rotDist(prng), M_PI * rotDist(prng) * 0.035f);
 			instanceData.push_back(inst);
 		}
 		// Even distribution

@@ -12,6 +12,7 @@ layout (location = 2) in vec2 inUV;
 // Instanced attributes
 layout (location = 3) in vec3 instancePos;
 layout (location = 4) in vec3 instanceScale;
+layout (location = 5) in vec3 instanceRotation;
 
 layout (location = 0) out vec3 outNormal;
 layout (location = 1) out vec2 outUV;
@@ -38,17 +39,57 @@ void main(void)
 	outUV = inUV;
 	outNormal = inNormal;
 
-	vec4 pos = vec4(inPos, 1.0);
+//	mat3 rotMat;
+//	float s = sin(instanceRotation.y);
+//	float c = cos(instanceRotation.y);
+//	rotMat[0] = vec3(c, 0.0, s);
+//	rotMat[1] = vec3(0.0, 1.0, 0.0);
+//	rotMat[2] = vec3(-s, 0.0, c);
+//
+
+	mat3 mx, my, mz;
+	
+	// rotate around x
+	float s = sin(instanceRotation.x);
+	float c = cos(instanceRotation.x);
+
+	mx[0] = vec3(c, s, 0.0);
+	mx[1] = vec3(-s, c, 0.0);
+	mx[2] = vec3(0.0, 0.0, 1.0);
+	
+	// rotate around y
+	s = sin(instanceRotation.y);
+	c = cos(instanceRotation.y);
+
+	my[0] = vec3(c, 0.0, s);
+	my[1] = vec3(0.0, 1.0, 0.0);
+	my[2] = vec3(-s, 0.0, c);
+	
+	// rot around z
+	s = sin(instanceRotation.z);
+	c = cos(instanceRotation.z);	
+	
+	mz[0] = vec3(1.0, 0.0, 0.0);
+	mz[1] = vec3(0.0, c, s);
+	mz[2] = vec3(0.0, -s, c);
+	
+	mat3 rotMat = mz * my * mx;
+
+
+	vec4 pos = vec4(inPos * rotMat, 1.0);
 	pos.xyz *= instanceScale;
 	pos.xyz += instancePos + pushConsts.pos;
 	if (pushConsts.scale[1][1] < 0) {
 		pos.y *= -1.0f;
 	}
+
 	gl_Position = ubo.projection * ubo.modelview * pos;
 
 	outViewVec = -pos.xyz;
 	outLightVec = normalize(ubo.lightDir.xyz + outViewVec);
 	outViewPos = (ubo.modelview * vec4(pos.xyz, 1.0)).xyz;
+
+	outNormal = normalize(inverse(rotMat) * inNormal);
 
 	// Clip against reflection plane
 	if (length(pushConsts.clipPlane) != 0.0)  {
