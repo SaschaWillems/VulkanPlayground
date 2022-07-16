@@ -25,8 +25,7 @@ layout (location = 3) out vec3 outLightVec;
 layout (location = 4) out vec3 outEyePos;
 layout (location = 5) out vec3 outViewPos;
 layout (location = 6) out vec3 outPos;
-layout (location = 7) flat out vec3 outColor;
-layout (location = 8) out float outTerrainHeight;
+layout (location = 7) out float outTerrainHeight;
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
@@ -38,7 +37,6 @@ layout(push_constant) uniform PushConsts {
 void main(void)
 {
 	outUV = inUV;
-	outColor = inColor;
 	outNormal = inNormal;
 	vec4 pos = vec4(inPos, 1.0);
 	pos.xyz += pushConsts.pos;

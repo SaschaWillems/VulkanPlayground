@@ -227,7 +227,7 @@ public:
 				glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
 				if (chunkPresent(viewedChunkCoord)) {
 					TerrainChunk* chunk = getChunk(viewedChunkCoord);
-					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize); // @todo: + 1?
+					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize + 1.0f);
 				} else {
 					int l = heightmapSettings.levelOfDetail;
 					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
@@ -329,6 +329,7 @@ public:
 		vks::Buffer terrain;
 		vks::Buffer sky;
 		vks::Buffer CSM;
+		vks::Buffer params;
 	} uniformBuffers;
 
 	struct UBO {
@@ -359,6 +360,11 @@ public:
 		float time;
 	} uboWaterPlane;
 
+	struct UniformDataParams {
+		uint32_t shadows = 0;
+		uint32_t fog = 1;
+	} uniformDataParams;
+
 	struct {
 		PipelineLayout* debug;
 		PipelineLayout* textured;
@@ -375,6 +381,7 @@ public:
 		DescriptorSet* terrain;
 		DescriptorSet* skysphere;
 		DescriptorSet* sceneMatrices;
+		DescriptorSet* sceneParams;
 	} descriptorSets;
 
 	struct {
@@ -529,6 +536,8 @@ public:
 		uniformBuffers.vsWater.destroy();
 		uniformBuffers.vsOffScreen.destroy();
 		uniformBuffers.vsDebugQuad.destroy();
+		uniformBuffers.vsShared.destroy();
+		uniformBuffers.params.destroy();
 	}
 
 	void createFrameBufferImage(FrameBufferAttachment& target, FramebufferType type)
@@ -730,6 +739,7 @@ public:
 			cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
 		}
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
+		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.sceneParams }, 1);
 		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
@@ -745,6 +755,7 @@ public:
 		// Water
 		if ((drawType == SceneDrawType::sceneDrawTypeDisplay) && (displayWaterPlane)) {
 			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
+			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.sceneParams }, 1);
 			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.water);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
@@ -764,6 +775,7 @@ public:
 					// @todo: offset pos by waterplane? also needed for terrain?
 					cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
 					cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
+					cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneParams }, 2);
 					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
 					if (drawType == SceneDrawType::sceneDrawTypeReflect) {
 						pos.y += waterPosition * 2.0f;
@@ -785,7 +797,7 @@ public:
 			pushConst.position = glm::vec4(pos, 0.0f);
 			cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
 			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-			//terrainChunk->draw(cb);
+			terrainChunk->draw(cb);
 		}
 	}
 
@@ -1084,6 +1096,16 @@ public:
 
 	void setupDescriptorSetLayout()
 	{
+		// Trees (@todo: glTF models in general)
+		descriptorSetLayouts.ubo = new DescriptorSetLayout(device);
+		descriptorSetLayouts.ubo->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.ubo->create();
+
+		// @todo: remove
+		descriptorSetLayouts.images = new DescriptorSetLayout(device);
+		descriptorSetLayouts.images->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.images->create();
+
 		// Shared (use all layout bindings)
 		descriptorSetLayouts.textured = new DescriptorSetLayout(device);
 		descriptorSetLayouts.textured->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1096,6 +1118,7 @@ public:
 
 		pipelineLayouts.textured = new PipelineLayout(device);
 		pipelineLayouts.textured->addLayout(descriptorSetLayouts.textured);
+		pipelineLayouts.textured->addLayout(descriptorSetLayouts.ubo);
 		pipelineLayouts.textured->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.textured->create();
 
@@ -1116,22 +1139,14 @@ public:
 
 		pipelineLayouts.terrain = new PipelineLayout(device);
 		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.terrain);
+		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.ubo);
 		pipelineLayouts.terrain->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.terrain->create();
-
-		// Trees (@todo: glTF models in general)
-		descriptorSetLayouts.ubo = new DescriptorSetLayout(device);
-		descriptorSetLayouts.ubo->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-		descriptorSetLayouts.ubo->create();
-
-		// @todo: remove
-		descriptorSetLayouts.images = new DescriptorSetLayout(device);
-		descriptorSetLayouts.images->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-		descriptorSetLayouts.images->create();
 
 		pipelineLayouts.tree = new PipelineLayout(device);
 		pipelineLayouts.tree->addLayout(descriptorSetLayouts.ubo);
 		pipelineLayouts.tree->addLayout(vkglTF::descriptorSetLayoutImage);
+		pipelineLayouts.tree->addLayout(descriptorSetLayouts.ubo);
 		pipelineLayouts.tree->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.tree->create();
 
@@ -1217,6 +1232,12 @@ public:
 		descriptorSets.sceneMatrices->addLayout(descriptorSetLayouts.ubo);
 		descriptorSets.sceneMatrices->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsShared.descriptor);
 		descriptorSets.sceneMatrices->create();
+
+		descriptorSets.sceneParams = new DescriptorSet(device);
+		descriptorSets.sceneParams->setPool(descriptorPool);
+		descriptorSets.sceneParams->addLayout(descriptorSetLayouts.ubo);
+		descriptorSets.sceneParams->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.params.descriptor);
+		descriptorSets.sceneParams->create();
 
 		// Shadow map cascades (one set per cascade)
 		// @todo: Doesn't make sense, all refer to same depth
@@ -1486,6 +1507,7 @@ public:
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.sky, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &depthPass.uniformBuffer, sizeof(depthPass.ubo)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.CSM, sizeof(uboCSM)));
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.params, sizeof(UniformDataParams)));
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.vsShared.map());
@@ -1496,9 +1518,11 @@ public:
 		VK_CHECK_RESULT(uniformBuffers.sky.map());
 		VK_CHECK_RESULT(depthPass.uniformBuffer.map());
 		VK_CHECK_RESULT(uniformBuffers.CSM.map());
+		VK_CHECK_RESULT(uniformBuffers.params.map());
 
 		updateUniformBuffers();
 		updateUniformBufferOffscreen();
+		memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
 	}
 
 	void updateUniformBuffers()
@@ -1801,6 +1825,26 @@ public:
 		}
 		ImGui::End();
 
+		bool updateParamsReq = false;
+		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Render options", nullptr, ImGuiWindowFlags_None);
+		updateParamsReq |= overlay->checkBox("Fog", &uniformDataParams.fog);
+		updateParamsReq |= overlay->checkBox("Shadows", &uniformDataParams.shadows);
+		ImGui::End();
+
+		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Terrain layers", nullptr, ImGuiWindowFlags_None);
+		for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
+			overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 1.0f);
+		}
+		ImGui::End();
+
+		if (updateParamsReq) {
+			vkQueueWaitIdle(queue);
+			memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
+		}
 
 		/*
 		if (overlay->header("Heightmap")) {

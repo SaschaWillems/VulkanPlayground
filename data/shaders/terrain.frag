@@ -6,6 +6,8 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
+#include "includes/constants.glsl"
+
 layout (set = 0, binding = 1) uniform sampler2D samplerHeight; 
 layout (set = 0, binding = 2) uniform sampler2DArray samplerLayers;
 layout (set = 0, binding = 3) uniform sampler2DArray shadowMap;
@@ -18,15 +20,18 @@ layout (set = 0, binding = 0) uniform UBO
 	vec4 layers[6];
 } ubo;
 
-#define SHADOW_MAP_CASCADE_COUNT 4
-#define ambient 0.2
-
-layout (binding = 4) uniform UBOCSM {
+layout (set = 0, binding = 4) uniform UBOCSM {
 	vec4 cascadeSplits;
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	mat4 inverseViewMat;
 	vec4 lightDir;
 } uboCSM;
+
+layout (set = 1, binding = 0) uniform UBOParams
+{
+	uint shadows;
+	uint fog;
+} params;
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
@@ -41,8 +46,7 @@ layout (location = 3) in vec3 inLightVec;
 layout (location = 4) in vec3 inEyePos;
 layout (location = 5) in vec3 inViewPos;
 layout (location = 6) in vec3 inPos;
-layout (location = 7) flat in vec3 inColor;
-layout (location = 8) in float inTerrainHeight;
+layout (location = 7) in float inTerrainHeight;
 
 layout (location = 0) out vec4 outFragColor;
 
@@ -136,30 +140,36 @@ void main()
 	// Depth compare for shadowing
 	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inPos, 1.0);	
 
-	float shadow = 0;
+	float shadow = 1.0f;
 	bool enablePCF = false;
-	if (pushConsts.shadows > 0) {
-		if (enablePCF) {
-			shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
-		} else {
-			shadow = textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
-		}
-		if (inPos.y > 0.0f) {
-			shadow = 1.0f;
-		}
-	} else {
-		shadow =  1.0f;
-	}
-
+//	if (pushConsts.shadows > 0) {
+//		if (enablePCF) {
+//			shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
+//		} else {
+//			shadow = textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
+//		}
+//		if (inPos.y > 0.0f) {
+//			shadow = 1.0f;
+//		}
+//	} else {
+//		shadow =  1.0f;
+//	}
+//
 	// Directional light
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(-ubo.lightDir.xyz);
 	float diffuse = dot(N, L);
-//	vec3 color = (ambient.rrr + (shadow) * (diffuse/* + specular*/)) * texture(samplerHeight, inUV).rgb; //* sampleTerrainLayer();
-	vec3 color = (ambient.rrr + (diffuse/* + specular*/)) * sampleTerrainLayer();
+	vec3 color = (ambient.rrr + (shadow) * (diffuse/* + specular*/)) * sampleTerrainLayer();
+//	vec3 color = (ambient.rrr + (diffuse/* + specular*/)) * sampleTerrainLayer();
 	outFragColor = vec4(color, 1.0);
 	// Apply fog
 	outFragColor.rgb = applyFog(color);
+
+	if (params.fog == 1) {
+		outFragColor.rgb = applyFog(color);
+	} else {
+		outFragColor = vec4(color, 1.0);
+	}
 
 	// Color cascades (if enabled)
 	bool colorCascades = false;
@@ -179,4 +189,5 @@ void main()
 				break;
 		}
 	}
+
 }

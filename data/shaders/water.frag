@@ -6,8 +6,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
-#define SHADOW_MAP_CASCADE_COUNT 4
-#define ambient 0.2
+#include "includes/constants.glsl"
 
 layout (binding = 0) uniform UBO 
 {
@@ -29,6 +28,12 @@ layout (set = 0, binding = 1) uniform sampler2D samplerRefraction;
 layout (set = 0, binding = 2) uniform sampler2D samplerReflection;
 layout (set = 0, binding = 3) uniform sampler2D samplerWaterNormalMap;
 layout (set = 0, binding = 4) uniform sampler2DArray shadowMap;
+
+layout (set = 1, binding = 0) uniform UBOParams
+{
+	uint shadows;
+	uint fog;
+} params;
 
 layout (location = 0) in vec2 inUV;
 layout (location = 1) in vec4 inPos;
@@ -112,7 +117,11 @@ void main()
 		color *= mix(refraction, reflection, fresnel * 1.25);
 	}
 
-	outFragColor = vec4(applyFog(color.rgb), 1.0);
+	if (params.fog == 1) {
+		outFragColor = vec4(applyFog(color.rgb), 1.0);
+	} else {
+		outFragColor = color;
+	}
 
 //	outFragColor = vec4(applyFog( texture(samplerReflection, vec2(projCoord)).rgb), 1.0);
 }

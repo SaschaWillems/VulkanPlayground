@@ -12,7 +12,11 @@ layout (location = 2) in vec2 inUV;
 // Instanced attributes
 layout (location = 3) in vec3 instancePos;
 
-layout (location = 0) out vec2 outUV;
+layout (location = 0) out vec3 outNormal;
+layout (location = 1) out vec2 outUV;
+layout (location = 2) out vec3 outViewVec;
+layout (location = 3) out vec3 outLightVec;
+layout (location = 4) out vec3 outViewPos;
 
 layout (set = 0, binding = 0) uniform UBO 
 {
@@ -31,6 +35,8 @@ layout(push_constant) uniform PushConsts {
 void main(void)
 {
 	outUV = inUV;
+	outNormal = inNormal;
+
 	vec4 pos = vec4(inPos, 1.0);
 	//pos.xyz += pushConsts.pos.xyz;
 	pos.xyz += instancePos + pushConsts.pos;
@@ -38,6 +44,10 @@ void main(void)
 		pos.y *= -1.0f;
 	}
 	gl_Position = ubo.projection * ubo.modelview * pos;
+
+	outViewVec = -pos.xyz;
+	outLightVec = normalize(ubo.lightDir.xyz + outViewVec);
+	outViewPos = (ubo.modelview * vec4(pos.xyz, 1.0)).xyz;
 
 	// Clip against reflection plane
 	if (length(pushConsts.clipPlane) != 0.0)  {
