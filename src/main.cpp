@@ -60,7 +60,7 @@ float waterPosition = 1.75f;
 struct HeightMapSettings {
 	//glm::vec3 scale = glm::vec3(27.6f);
 	float noiseScale = 66.0f; // 27.6;
-	int seed = 0;
+	int seed = 54;
 	uint32_t width = 100;
 	uint32_t height = 100;
 	float heightScale = 38.0f * 0.75f; // @todo
@@ -70,11 +70,15 @@ struct HeightMapSettings {
 	glm::vec2 offset = { 0,0 };
 	int mapChunkSize = 241;
 	int levelOfDetail = 1;
+	int treeDensity = 30;
+	float minTreeSize = 0.75f;
+	float maxTreeSize = 1.5f;
 } heightmapSettings;
 
 struct InstanceData {
 	glm::vec3 pos;
 	glm::vec3 scale;
+	glm::vec3 rotation;
 };
 
 class TerrainChunk {
@@ -144,11 +148,11 @@ public:
 		// Random distribution
 
 		const int dim = 30; // 24 241
-		const int maxTreeCount = dim * dim;
+		const int maxTreeCount = heightmapSettings.treeDensity * heightmapSettings.treeDensity;
 		std::random_device rndDevice;
 		std::default_random_engine prng(rndDevice());
 		std::uniform_real_distribution<float> distribution(0, (float)(vks::HeightMap::chunkSize - 1));
-		std::uniform_real_distribution<float> scaleDist(0.75f, 1.5f);
+		std::uniform_real_distribution<float> scaleDist(heightmapSettings.minTreeSize, heightmapSettings.maxTreeSize);
 		std::uniform_real_distribution<float> rotDist(0.0, 1.0);
 
 		for (int i = 0; i < maxTreeCount; i++) {
@@ -329,6 +333,7 @@ public:
 		"beech/beech.gltf",
 		"joshua/joshua.gltf",
 		"tropical/tropical.gltf",
+		"banana/banana.gltf"
 	};
 	int treeModelIndex = 2;
 
@@ -537,6 +542,10 @@ public:
 		timerSpeed *= 0.05f;
 
 		camera.setPosition(glm::vec3(0.0f, -25.0f, 0.0f));
+
+		camera.setPosition(glm::vec3(1021.0f, -32.0f, 526.0f));
+		camera.rotate(133.75f, 6.25f);
+
 
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;
@@ -1372,6 +1381,7 @@ public:
 			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, sizeof(float) * 6),
 			vks::initializers::vertexInputAttributeDescription(1, 3, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos)),
 			vks::initializers::vertexInputAttributeDescription(1, 4, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, scale)),
+			vks::initializers::vertexInputAttributeDescription(1, 5, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, rotation)),
 		};
 		vertexInputStateModelInstanced.pVertexBindingDescriptions = bindingDescriptions.data();
 		vertexInputStateModelInstanced.pVertexAttributeDescriptions = attributeDescriptions.data();
@@ -1752,7 +1762,9 @@ public:
 				cb->draw(6, 1, 0, 0);
 			}
 
-			drawUI(cb->handle);
+			if (UIOverlay.visible) {
+				drawUI(cb->handle);
+			}
 
 			cb->endRenderPass();
 		}
@@ -1904,6 +1916,9 @@ public:
 		overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
 		overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
 		overlay->comboBox("Tree type", &treeModelIndex, treeModels);
+		overlay->sliderInt("Tree density", &heightmapSettings.treeDensity, 1, 64);
+		overlay->sliderFloat("Min. tree size", &heightmapSettings.minTreeSize, 0.1f, heightmapSettings.maxTreeSize);
+		overlay->sliderFloat("Max. tree size", &heightmapSettings.maxTreeSize, heightmapSettings.minTreeSize, 5.0f);
 		//overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
 		if (overlay->button("Update heightmap")) {
 			updateHeightmap(false);
