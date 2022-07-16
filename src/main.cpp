@@ -1582,6 +1582,7 @@ public:
 
 		uboTerrain.lightDir = glm::normalize(-lightPos);
 		uboWaterPlane.lightDir = glm::normalize(-lightPos);
+		uboShared.lightDir = glm::normalize(-lightPos);
 
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
