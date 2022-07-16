@@ -145,8 +145,10 @@ public:
 		for (int x = 0; x < dim; x++) {
 			for (int y = 0; y < dim; y++) {
 				const float f = 10.1f;
-				int terrainX = round((float)x * f);
-				int terrainY = round((float)y * f);
+				float xPos = (float)x * f + 5.0f;
+				float yPos = (float)y * f + 5.0f;
+				int terrainX = round(xPos + 0.5f);
+				int terrainY = round(yPos + 0.5f);
 				float h1 = getHeight(terrainX - 1, terrainY);
 				float h2 = getHeight(terrainX + 1, terrainY);
 				float h3 = getHeight(terrainX, terrainY - 1);
@@ -156,7 +158,7 @@ public:
 					continue;
 				}
 				InstanceData inst{};
-				inst.pos = glm::vec3((float)topLeftX + (float)x * f, -h, topLeftZ - (float)y * f);
+				inst.pos = glm::vec3((float)topLeftX + xPos, -h, (float)topLeftZ - yPos);
 				instanceData.push_back(inst);
 			}
 		}
