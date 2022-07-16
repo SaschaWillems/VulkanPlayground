@@ -14,6 +14,7 @@ layout (binding = 0) uniform UBO
 	mat4 model;
 	vec4 cameraPos;
 	vec4 lightDir;
+	vec4 color;
 	float time;
 } ubo;
 
@@ -108,7 +109,7 @@ void main()
 
 	vec4 dudv = normal * distortAmount;
 
-	vec4 color = vec4(0.75, 0.75, 1.0, 1.0);
+	vec4 color = ubo.color;;
 	if (gl_FrontFacing) {
 //		float shadow = shadowMapping();
 		float shadow = 1.0;

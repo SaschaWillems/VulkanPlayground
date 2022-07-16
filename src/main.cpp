@@ -368,6 +368,7 @@ public:
 	bool renderShadows = false;
 	bool fixFrustum = false;
 	bool hasExtMemoryBudget = false;
+	float waterColor[3];
 
 	struct MemoryBudget {
 		int heapCount;
@@ -476,6 +477,7 @@ public:
 		glm::mat4 model;
 		glm::vec4 cameraPos;
 		glm::vec4 lightDir;
+		glm::vec4 color = glm::vec4(1.0f);// glm::vec4(0.75, 0.75, 1.0, 1.0);
 		float time;
 	} uboWaterPlane;
 
@@ -637,7 +639,7 @@ public:
 		//}
 
 		uboTerrain.layers[0] = glm::vec4(0.038f, 0.038f, glm::vec2(0.0));
-		uboTerrain.layers[1] = glm::vec4(0.0f,   0.213f, glm::vec2(0.0));
+		uboTerrain.layers[1] = glm::vec4(0.0f, 0.213f, glm::vec2(0.0));
 		uboTerrain.layers[2] = glm::vec4(0.266f, 0.212f, glm::vec2(0.0));
 		uboTerrain.layers[3] = glm::vec4(0.530f, 0.152f, glm::vec2(0.0));
 		uboTerrain.layers[4] = glm::vec4(0.712f, 0.273f, glm::vec2(0.0));
@@ -650,6 +652,10 @@ public:
 
 		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+
+		waterColor[0] = uboWaterPlane.color.r;
+		waterColor[1] = uboWaterPlane.color.g;
+		waterColor[2] = uboWaterPlane.color.b;
 	}
 
 	~VulkanExample()
@@ -1979,6 +1985,13 @@ public:
 		overlay->sliderFloat("Height scale", &heightmapSettings.heightScale, 0.1f, 64.0f);
 		overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
 		overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
+		
+		if (ImGui::ColorEdit4("Water color", waterColor)) {
+			uboWaterPlane.color.r = waterColor[0];
+			uboWaterPlane.color.g = waterColor[1];
+			uboWaterPlane.color.b = waterColor[2];
+		}
+
 		overlay->comboBox("Tree type", &heightmapSettings.treeModelIndex, treeModels);
 		overlay->sliderInt("Tree density", &heightmapSettings.treeDensity, 1, 64);
 		overlay->sliderFloat("Min. tree size", &heightmapSettings.minTreeSize, 0.1f, heightmapSettings.maxTreeSize);
@@ -1992,6 +2005,7 @@ public:
 			for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
 				uboTerrain.layers[i] = heightmapSettings.textureLayers[i];
 			}
+			updateHeightmap(false);
 		}
 		ImGui::End();
 	}
