@@ -319,6 +319,17 @@ public:
 	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
 	enum class FramebufferType { Color, DepthStencil };
 
+	const std::vector<std::string> treeModels = { 
+		"spruce/spruce.gltf", 
+		"pine/pine.gltf", 
+		"fir/fir.gltf",
+		"acacia/acacia.gltf",
+		"beech/beech.gltf",
+		"joshua/joshua.gltf",
+		"tropical/tropical.gltf",
+	};
+	int treeModelIndex = 2;
+
 	struct CascadeDebug {
 		bool enabled = false;
 		int32_t cascadeIndex = 0;
@@ -355,7 +366,7 @@ public:
 	struct Models {
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
-		vkglTF::Model tree;
+		std::vector<vkglTF::Model> trees;
 	} models;
 
 	struct {
@@ -823,7 +834,7 @@ public:
 					}
 					cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-					models.tree.draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
+					models.trees[treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
 				}
 			}
 		}
@@ -1077,9 +1088,10 @@ public:
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
-		const std::vector<std::string> treeModels = { "spruce/spruce.gltf", "pine/pine.gltf", "fir/fir.gltf"};
-		const int treeModelIndex = 2;
-		models.tree.loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[treeModelIndex], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
+		models.trees.resize(treeModels.size());
+		for (size_t i = 0; i < treeModels.size(); i++) {
+			models.trees[i].loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[i], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
+		}
 
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
@@ -1889,7 +1901,8 @@ public:
 		overlay->sliderFloat("Height scale", &heightmapSettings.heightScale, 0.1f, 64.0f);
 		overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
 		overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
-		overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
+		overlay->comboBox("Tree type", &treeModelIndex, treeModels);
+		//overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
 		if (overlay->button("Update heightmap")) {
 			updateHeightmap(false);
 		}
