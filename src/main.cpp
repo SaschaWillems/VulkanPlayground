@@ -154,7 +154,7 @@ public:
 				float h3 = getHeight(terrainX, terrainY - 1);
 				float h4 = getHeight(terrainX, terrainY + 1);
 				float h = (h1 + h2 + h3 + h4) / 4.0f;
-				if (h <= waterPosition) {
+				if ((h <= waterPosition) || (h > 15.0f)) {
 					continue;
 				}
 				InstanceData inst{};
@@ -179,7 +179,7 @@ public:
 
 class InfiniteTerrain {
 public:
-	float maxViewDst = 300.0f * 0.0f;
+	float maxViewDst = 300.0f;
 	glm::vec2 viewerPosition;
 	int chunkSize;
 	int chunksVisibleInViewDistance;
@@ -477,7 +477,7 @@ public:
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
-		title = "Vulkan Playground";
+		title = "Vulkan infinite terrain";
 		camera.type = Camera::CameraType::firstperson;
 		camera.setPerspective(45.0f, (float)width / (float)height, zNear, zFar);
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
@@ -527,7 +527,7 @@ public:
 		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
 		backgroundLoadingThread.detach();
 
-		apiVersion = VK_API_VERSION_1_1;
+		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 	}
 
@@ -748,6 +748,9 @@ public:
 				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
 				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
 					pos.y += waterPosition * 2.0f;
+					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_BACK_BIT);
+				} else {
+					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
 				}
 				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 				terrainChunk->draw(cb);
@@ -755,6 +758,7 @@ public:
 		}
 
 		// Water
+		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_BACK_BIT);
 		if ((drawType == SceneDrawType::sceneDrawTypeDisplay) && (displayWaterPlane)) {
 			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.waterplane }, 0);
 			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.sceneParams }, 1);
@@ -769,6 +773,7 @@ public:
 		}
 
 		// Trees
+		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
 		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
@@ -1277,7 +1282,7 @@ public:
 		VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE,VK_COMPARE_OP_LESS_OR_EQUAL);
 		VkPipelineViewportStateCreateInfo viewportState = vks::initializers::pipelineViewportStateCreateInfo(1, 1, 0);
 		VkPipelineMultisampleStateCreateInfo multisampleState = vks::initializers::pipelineMultisampleStateCreateInfo(VK_SAMPLE_COUNT_1_BIT, 0);
-		std::vector<VkDynamicState> dynamicStateEnables = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+		std::vector<VkDynamicState> dynamicStateEnables = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE };
 		VkPipelineDynamicStateCreateInfo dynamicState = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStateEnables);
 
 		// Vertex bindings and attributes
