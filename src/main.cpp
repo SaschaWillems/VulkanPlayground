@@ -74,6 +74,7 @@ struct HeightMapSettings {
 
 struct InstanceData {
 	glm::vec3 pos;
+	glm::vec3 scale;
 };
 
 class TerrainChunk {
@@ -135,8 +136,41 @@ public:
 		if (instanceBuffer.buffer != VK_NULL_HANDLE) {
 			return;
 		}
+
 		float topLeftX = (float)(vks::HeightMap::chunkSize - 1) / -2.0f;
 		float topLeftZ = (float)(vks::HeightMap::chunkSize - 1) / 2.0f;
+
+		std::vector<InstanceData> instanceData;
+
+		// Random distribution
+
+		const int dim = 24; // 241
+		const int maxTreeCount = dim * dim;
+		std::random_device rndDevice;
+		std::default_random_engine prng(rndDevice());
+		std::uniform_real_distribution<float> distribution(0, (float)(vks::HeightMap::chunkSize - 1));
+		std::uniform_real_distribution<float> scaleDist(0.75f, 1.5f);
+
+		for (int i = 0; i < maxTreeCount; i++) {
+			float xPos = distribution(prng);
+			float yPos = distribution(prng);
+			int terrainX = round(xPos + 0.5f);
+			int terrainY = round(yPos + 0.5f);
+			float h1 = getHeight(terrainX - 1, terrainY);
+			float h2 = getHeight(terrainX + 1, terrainY);
+			float h3 = getHeight(terrainX, terrainY - 1);
+			float h4 = getHeight(terrainX, terrainY + 1);
+			float h = (h1 + h2 + h3 + h4) / 4.0f;
+			if ((h <= waterPosition) || (h > 15.0f)) {
+				continue;
+			}
+			InstanceData inst{};
+			inst.pos = glm::vec3((float)topLeftX + xPos, -h, (float)topLeftZ - yPos);
+			inst.scale = glm::vec3(scaleDist(prng));
+			instanceData.push_back(inst);
+		}
+		// Even distribution
+		/*
 
 		std::vector<InstanceData> instanceData;
 		const int dim = 24; // 241
@@ -162,6 +196,8 @@ public:
 				instanceData.push_back(inst);
 			}
 		}
+		*/
+
 		treeInstanceCount = static_cast<uint32_t>(instanceData.size());
 		vks::Buffer stagingBuffer;
 		VK_CHECK_RESULT(defaultDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
@@ -1043,9 +1079,9 @@ public:
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
-		//models.tree.loadFromFile(getAssetPath() + "scenes/trees/spruce/spruce.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
-		models.tree.loadFromFile(getAssetPath() + "scenes/trees/pine/pine.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
-		//models.tree.loadFromFile(getAssetPath() + "scenes/trees/fir/fir.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
+		const std::vector<std::string> treeModels = { "spruce/spruce.gltf", "pine/pine.gltf", "fir/fir.gltf"};
+		const int treeModelIndex = 1;
+		models.tree.loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[treeModelIndex], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
 
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
@@ -1323,6 +1359,7 @@ public:
 			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3),
 			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32_SFLOAT, sizeof(float) * 6),
 			vks::initializers::vertexInputAttributeDescription(1, 3, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos)),
+			vks::initializers::vertexInputAttributeDescription(1, 4, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, scale)),
 		};
 		vertexInputStateModelInstanced.pVertexBindingDescriptions = bindingDescriptions.data();
 		vertexInputStateModelInstanced.pVertexAttributeDescriptions = attributeDescriptions.data();

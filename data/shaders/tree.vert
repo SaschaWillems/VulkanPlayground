@@ -11,6 +11,7 @@ layout (location = 2) in vec2 inUV;
 
 // Instanced attributes
 layout (location = 3) in vec3 instancePos;
+layout (location = 4) in vec3 instanceScale;
 
 layout (location = 0) out vec3 outNormal;
 layout (location = 1) out vec2 outUV;
@@ -38,7 +39,7 @@ void main(void)
 	outNormal = inNormal;
 
 	vec4 pos = vec4(inPos, 1.0);
-	//pos.xyz += pushConsts.pos.xyz;
+	pos.xyz *= instanceScale;
 	pos.xyz += instancePos + pushConsts.pos;
 	if (pushConsts.scale[1][1] < 0) {
 		pos.y *= -1.0f;
