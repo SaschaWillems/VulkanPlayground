@@ -106,8 +106,8 @@ public:
 	void updateHeightMap() {
 		assert(heightMap);
 		if (heightMap->vertexBuffer.buffer != VK_NULL_HANDLE) {
-			vkDestroyBuffer(defaultDevice->logicalDevice, heightMap->vertexBuffer.buffer, nullptr);
-			vkFreeMemory(defaultDevice->logicalDevice, heightMap->vertexBuffer.memory, nullptr);
+			heightMap->vertexBuffer.destroy();
+			heightMap->indexBuffer.destroy();
 		}
 		heightMap->generate(
 			heightmapSettings.seed,
@@ -132,9 +132,8 @@ public:
 
 	void updateTrees() {
 		assert(heightMap);
-		// @todo
 		if (instanceBuffer.buffer != VK_NULL_HANDLE) {
-			return;
+			instanceBuffer.destroy();
 		}
 
 		float topLeftX = (float)(vks::HeightMap::chunkSize - 1) / -2.0f;
@@ -144,7 +143,7 @@ public:
 
 		// Random distribution
 
-		const int dim = 24; // 241
+		const int dim = 30; // 24 241
 		const int maxTreeCount = dim * dim;
 		std::random_device rndDevice;
 		std::default_random_engine prng(rndDevice());
@@ -574,7 +573,6 @@ public:
 		uniformBuffers.vsWater.destroy();
 		uniformBuffers.vsOffScreen.destroy();
 		uniformBuffers.vsDebugQuad.destroy();
-		uniformBuffers.vsShared.destroy();
 		uniformBuffers.params.destroy();
 	}
 
@@ -1080,7 +1078,7 @@ public:
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
 		const std::vector<std::string> treeModels = { "spruce/spruce.gltf", "pine/pine.gltf", "fir/fir.gltf"};
-		const int treeModelIndex = 1;
+		const int treeModelIndex = 2;
 		models.tree.loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[treeModelIndex], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
 
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
@@ -1861,14 +1859,6 @@ public:
 		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
 		ImGui::End();
 
-		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
-		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
-		ImGui::Begin("Terrain layers", nullptr, ImGuiWindowFlags_None);
-		for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-			overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 1.0f);
-		}
-		ImGui::End();
-
 		bool updateParamsReq = false;
 		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
@@ -1877,7 +1867,7 @@ public:
 		updateParamsReq |= overlay->checkBox("Shadows", &uniformDataParams.shadows);
 		ImGui::End();
 
-		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Terrain layers", nullptr, ImGuiWindowFlags_None);
 		for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
@@ -1890,23 +1880,19 @@ public:
 			memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
 		}
 
-		/*
-		if (overlay->header("Heightmap")) {
-			bool settingChanged = false;
-			settingChanged = overlay->sliderInt("Seed", &heightmapSettings.seed, 0, 128);
-			settingChanged |= overlay->sliderFloat("Noise scale", &heightmapSettings.noiseScale, 0.0f, 128.0f);
-			settingChanged |= overlay->sliderFloat("Height scale", &heightmapSettings.heightScale, 0.1f, 64.0f);
-			settingChanged |= overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
-			settingChanged |= overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
-			settingChanged |= overlay->sliderFloat("Offset.x", &heightmapSettings.offset.x, 0.0f, 16.0f);
-			settingChanged |= overlay->sliderFloat("Offset.y", &heightmapSettings.offset.y, 0.0f, 15.0f);
-			settingChanged |= overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
-			if (settingChanged) {
-				updateHeightmap(false);
-			}
+		ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Terrain settings", nullptr, ImGuiWindowFlags_None);
+		overlay->sliderInt("Seed", &heightmapSettings.seed, 0, 128);
+		overlay->sliderFloat("Noise scale", &heightmapSettings.noiseScale, 0.0f, 128.0f);
+		overlay->sliderFloat("Height scale", &heightmapSettings.heightScale, 0.1f, 64.0f);
+		overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
+		overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
+		overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
+		if (overlay->button("Update heightmap")) {
+			updateHeightmap(false);
 		}
-
-		*/
+		ImGui::End();
 	}
 
 	virtual void mouseMoved(double x, double y, bool& handled)
