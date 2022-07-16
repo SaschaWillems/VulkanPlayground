@@ -4,7 +4,7 @@
  */
 
 const float fogDensity = 0.05;
-const vec3 fogColor = vec3(0.47, 0.5, 0.67);
+//const vec3 fogColor = params.fogColor.rgb; //vec3(0.47, 0.5, 0.67);
 
 vec3 applyFog(vec3 color)
 {
@@ -12,5 +12,5 @@ vec3 applyFog(vec3 color)
 	float dist = gl_FragCoord.z / gl_FragCoord.w * 0.1;
 	float d = fogDensity * dist;
 	float factor = 1.0 - clamp(exp2(d * d * LOG2), 0.0, 1.0);
-	return mix(color, fogColor, factor);
+	return mix(color, params.fogColor.rgb, factor);
 }

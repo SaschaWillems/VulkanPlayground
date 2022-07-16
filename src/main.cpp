@@ -78,6 +78,9 @@ struct HeightMapSettings {
 	float maxTreeSize = 1.5f;
 	int treeModelIndex = 2;
 	glm::vec4 textureLayers[TERRAIN_LAYER_COUNT];
+	float waterColor[3];
+	float fogColor[3] = { 0.47f, 0.5f, 0.67f };
+	std::string skySphere = "skysphere01.ktx";
 
 	void loadFromFile(const std::string filename) {
 		std::ifstream file;
@@ -120,6 +123,28 @@ struct HeightMapSettings {
 		}
 		if (settings.find("maxTreeSize") != settings.end()) {
 			maxTreeSize = settings["maxTreeSize"];
+		}
+		if (settings.find("waterColor.r") != settings.end()) {
+			waterColor[0] = settings["waterColor.r"] / 255.0f;
+		}
+		if (settings.find("waterColor.g") != settings.end()) {
+			waterColor[1] = settings["waterColor.g"] / 255.0f;
+		}
+		if (settings.find("waterColor.b") != settings.end()) {
+			waterColor[2] = settings["waterColor.b"] / 255.0f;
+		}
+		if (settings.find("fogColor.r") != settings.end()) {
+			fogColor[0] = settings["fogColor.r"] / 255.0f;
+		}
+		if (settings.find("fogColor.g") != settings.end()) {
+			fogColor[1] = settings["fogColor.g"] / 255.0f;
+		}
+		if (settings.find("fogColor.b") != settings.end()) {
+			fogColor[2] = settings["fogColor.b"] / 255.0f;
+		}
+		if (settings.find("skySphere") != settings.end()) {
+			const int idx = (int)settings["skySphere"];
+			skySphere = "skysphere" + std::to_string(idx) + ".ktx";
 		}
 		for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
 			const std::string id = "textureLayers[" + std::to_string(i) + "]";
@@ -356,6 +381,21 @@ public:
 			heightmapSettings.levelOfDetail = l;
 		}
 	}
+
+	void clear() {
+		vkQueueWaitIdle(defaultQueue);
+		vkQueueWaitIdle(transferQueue);
+		for (auto& chunk : terrainChunks) {
+			if (chunk->hasValidMesh) {
+				chunk->heightMap->vertexBuffer.destroy();
+				chunk->heightMap->indexBuffer.destroy();
+				chunk->instanceBuffer.destroy();
+			}
+			delete chunk;
+		}
+		terrainChunks.resize(0);
+	}
+
 };
 
 class VulkanExample : public VulkanExampleBase
@@ -368,7 +408,6 @@ public:
 	bool renderShadows = false;
 	bool fixFrustum = false;
 	bool hasExtMemoryBudget = false;
-	float waterColor[3];
 
 	struct MemoryBudget {
 		int heapCount;
@@ -393,7 +432,8 @@ public:
 		"beech/beech.gltf",
 		"joshua/joshua.gltf",
 		"tropical/tropical.gltf",
-		"banana/banana.gltf"
+		"banana/banana.gltf",
+		"willow/willow.gltf",
 	};
 
 	const std::vector<std::string> presets = {
@@ -484,6 +524,9 @@ public:
 	struct UniformDataParams {
 		uint32_t shadows = 0;
 		uint32_t fog = 1;
+		uint32_t _pad0;
+		uint32_t _pad1;
+		glm::vec4 fogColor;
 	} uniformDataParams;
 
 	struct {
@@ -653,9 +696,9 @@ public:
 		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-		waterColor[0] = uboWaterPlane.color.r;
-		waterColor[1] = uboWaterPlane.color.g;
-		waterColor[2] = uboWaterPlane.color.b;
+		heightmapSettings.waterColor[0] = uboWaterPlane.color.r;
+		heightmapSettings.waterColor[1] = uboWaterPlane.color.g;
+		heightmapSettings.waterColor[2] = uboWaterPlane.color.b;
 	}
 
 	~VulkanExample()
@@ -1165,6 +1208,14 @@ public:
 		Sample
 	*/
 
+	void loadSkySphere(const std::string filename)
+	{
+		vkQueueWaitIdle(queue);
+		textures.skySphere.destroy();
+		textures.skySphere.loadFromFile(getAssetPath() + "textures/" + filename, VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		descriptorSets.skysphere->updateDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.skySphere.descriptor);
+	}
+
 	void loadAssets()
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
@@ -1174,7 +1225,7 @@ public:
 			models.trees[i].loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[i], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
 		}
 
-		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere_02.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere2.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 
@@ -1658,6 +1709,12 @@ public:
 
 		updateUniformBuffers();
 		updateUniformBufferOffscreen();
+		updateUniformParams();
+	}
+
+	void updateUniformParams()
+	{
+		uniformDataParams.fogColor = glm::vec4(heightmapSettings.fogColor[0], heightmapSettings.fogColor[1], heightmapSettings.fogColor[2], 1.0f);
 		memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
 	}
 
@@ -1986,10 +2043,17 @@ public:
 		overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
 		overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
 		
-		if (ImGui::ColorEdit4("Water color", waterColor)) {
-			uboWaterPlane.color.r = waterColor[0];
-			uboWaterPlane.color.g = waterColor[1];
-			uboWaterPlane.color.b = waterColor[2];
+		if (ImGui::ColorEdit4("Water color", heightmapSettings.waterColor)) {
+			uboWaterPlane.color.r = heightmapSettings.waterColor[0];
+			uboWaterPlane.color.g = heightmapSettings.waterColor[1];
+			uboWaterPlane.color.b = heightmapSettings.waterColor[2];
+		}
+
+		if (ImGui::ColorEdit4("Fog color", heightmapSettings.fogColor)) {
+			uniformDataParams.fogColor.r = heightmapSettings.fogColor[0];
+			uniformDataParams.fogColor.g = heightmapSettings.fogColor[1];
+			uniformDataParams.fogColor.b = heightmapSettings.fogColor[2];
+			updateUniformParams();
 		}
 
 		overlay->comboBox("Tree type", &heightmapSettings.treeModelIndex, treeModels);
@@ -2002,10 +2066,17 @@ public:
 		}
 		if (overlay->comboBox("Load preset", &presetIndex, presets)) {
 			heightmapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
+			loadSkySphere(heightmapSettings.skySphere);
 			for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
 				uboTerrain.layers[i] = heightmapSettings.textureLayers[i];
 			}
+			infiniteTerrain.clear();
 			updateHeightmap(false);
+			viewChanged();
+			updateUniformParams();
+			uboWaterPlane.color.r = heightmapSettings.waterColor[0];
+			uboWaterPlane.color.g = heightmapSettings.waterColor[1];
+			uboWaterPlane.color.b = heightmapSettings.waterColor[2];
 		}
 		ImGui::End();
 	}

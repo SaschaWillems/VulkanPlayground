@@ -28,6 +28,7 @@ layout (set = 2, binding = 0) uniform UBOParams
 {
 	uint shadows;
 	uint fog;
+	vec4 fogColor;
 } params;
 
 layout (location = 0) out vec4 outFragColor;
@@ -37,13 +38,14 @@ layout (location = 0) out vec4 outFragColor;
 void main(void)
 {
 	vec4 colorMap = texture(samplerColorMap, inUV);
-
-//	if (color.a < 0.5 /*material.alphaMaskCutoff*/) {
+//	float a = textureLod(samplerColorMap, inUV, 0.0).a;
+//
+//	if (a < 0.1 /*material.alphaMaskCutoff*/) {
 //		discard;
 //	}
-
+//
 	// Lighting
-	float amb = 0.5;
+	float amb = 0.75;
 	float shadow = 1.0;
 	vec3 N = normalize(inNormal);
 //	vec3 L = normalize(-ubo.lightDir.xyz);
@@ -56,6 +58,7 @@ void main(void)
 	float specular = pow(max(dot(R, V), 0.0), 32.0);
 	specular = 0.0f;
 	vec3 color = vec3(diffuse * colorMap.rgb + specular);
+//	color = colorMap.rgb;
 
 	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color), colorMap.a);

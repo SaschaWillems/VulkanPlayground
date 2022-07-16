@@ -34,6 +34,7 @@ layout (set = 1, binding = 0) uniform UBOParams
 {
 	uint shadows;
 	uint fog;
+	vec4 fogColor;
 } params;
 
 layout (location = 0) in vec2 inUV;
