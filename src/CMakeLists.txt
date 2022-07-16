@@ -1,5 +1,6 @@
 SET(EXAMPLE_NAME "VulkanPlayground")
-file(GLOB SOURCE *.cpp ${BASE_HEADERS})
+file(GLOB HEADERS "*.h" "*.hpp")
+file(GLOB SOURCE "*.cpp" ${BASE_HEADERS} ${HEADERS})
 file(GLOB SHADERS "../data/shaders/*.vert" "../data/shaders/*.frag" "../data/shaders/*.comp" "../data/shaders/*.geom" "../data/shaders/*.tesc" "../data/shaders/*.tese")
 file(GLOB SHADER_INCLUDES "../data/shaders/includes/*.glsl")
 source_group("Shaders" FILES ${SHADERS})

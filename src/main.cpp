@@ -13,9 +13,6 @@
 #include <vector>
 #include <thread>
 #include <mutex>
-#include <map>
-#include <fstream>
-#include <sstream>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -38,12 +35,11 @@
 #include "Image.hpp"
 #include "ImageView.hpp"
 #include "frustum.hpp"
+#include "HeightMapSettings.h"
 
 #define ENABLE_VALIDATION false
 
 #define FB_DIM 1024
-
-#define TERRAIN_LAYER_COUNT 6
 
 #if defined(__ANDROID__)
 #define SHADOWMAP_DIM 2048
@@ -60,103 +56,7 @@ vks::Frustum frustum;
 const float chunkDim = 241.0f;
 float waterPosition = 1.75f;
 
-struct HeightMapSettings {
-	float noiseScale = 66.0f;
-	int seed = 54;
-	uint32_t width = 100;
-	uint32_t height = 100;
-	float heightScale = 28.5f;
-	uint32_t octaves = 4;
-	float persistence = 0.5f;
-	float lacunarity = 1.87f;
-	glm::vec2 offset = { 0,0 };
-	int mapChunkSize = 241;
-	int levelOfDetail = 1;
-	int treeDensity = 30;
-	float minTreeSize = 0.75f;
-	float maxTreeSize = 1.5f;
-	int treeModelIndex = 2;
-	glm::vec4 textureLayers[TERRAIN_LAYER_COUNT];
-	float waterColor[3];
-	float fogColor[3] = { 0.47f, 0.5f, 0.67f };
-	std::string skySphere = "skysphere01.ktx";
-
-	void loadFromFile(const std::string filename) {
-		std::ifstream file;
-		file.open(filename);
-		assert(file.is_open());
-		std::string line;
-		std::string key;
-		float value;
-		std::map<std::string, float> settings{};
-		while (file.good()) {
-			getline(file, line);
-			std::istringstream ss(line);
-			ss >> key >> value;
-			settings[key] = value;
-		}
-		file.close();
-		if (settings.find("noiseScale") != settings.end()) {
-			noiseScale = settings["noiseScale"];
-		}
-		if (settings.find("seed") != settings.end()) {
-			seed = (int)settings["seed"];
-		}
-		if (settings.find("heightScale") != settings.end()) {
-			heightScale = settings["heightScale"];
-		}
-		if (settings.find("persistence") != settings.end()) {
-			persistence = settings["persistence"];
-		}
-		if (settings.find("persistence") != settings.end()) {
-			persistence = settings["persistence"];
-		}
-		if (settings.find("treeDensity") != settings.end()) {
-			treeDensity = (int)settings["treeDensity"];
-		}
-		if (settings.find("treeModelIndex") != settings.end()) {
-			treeModelIndex = (int)settings["treeModelIndex"];
-		}
-		if (settings.find("minTreeSize") != settings.end()) {
-			minTreeSize = settings["minTreeSize"];
-		}
-		if (settings.find("maxTreeSize") != settings.end()) {
-			maxTreeSize = settings["maxTreeSize"];
-		}
-		if (settings.find("waterColor.r") != settings.end()) {
-			waterColor[0] = settings["waterColor.r"] / 255.0f;
-		}
-		if (settings.find("waterColor.g") != settings.end()) {
-			waterColor[1] = settings["waterColor.g"] / 255.0f;
-		}
-		if (settings.find("waterColor.b") != settings.end()) {
-			waterColor[2] = settings["waterColor.b"] / 255.0f;
-		}
-		if (settings.find("fogColor.r") != settings.end()) {
-			fogColor[0] = settings["fogColor.r"] / 255.0f;
-		}
-		if (settings.find("fogColor.g") != settings.end()) {
-			fogColor[1] = settings["fogColor.g"] / 255.0f;
-		}
-		if (settings.find("fogColor.b") != settings.end()) {
-			fogColor[2] = settings["fogColor.b"] / 255.0f;
-		}
-		if (settings.find("skySphere") != settings.end()) {
-			const int idx = (int)settings["skySphere"];
-			skySphere = "skysphere" + std::to_string(idx) + ".ktx";
-		}
-		for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-			const std::string id = "textureLayers[" + std::to_string(i) + "]";
-			if (settings.find(id + ".start") != settings.end()) {
-				textureLayers[i].x = settings[id + ".start"];
-			}
-			if (settings.find(id + ".range") != settings.end()) {
-				textureLayers[i].y = settings[id + ".range"];
-			}
-		}
-
-	}
-} heightmapSettings;
+HeightMapSettings heightMapSettings;
 
 struct InstanceData {
 	glm::vec3 pos;
@@ -197,18 +97,18 @@ public:
 			heightMap->indexBuffer.destroy();
 		}
 		heightMap->generate(
-			heightmapSettings.seed,
-			heightmapSettings.noiseScale,
-			heightmapSettings.octaves,
-			heightmapSettings.persistence,
-			heightmapSettings.lacunarity,
+			heightMapSettings.seed,
+			heightMapSettings.noiseScale,
+			heightMapSettings.octaves,
+			heightMapSettings.persistence,
+			heightMapSettings.lacunarity,
 			// @todo: base on offset instead of changing it
-			heightmapSettings.offset);
-		glm::vec3 scale = glm::vec3(1.0f, -heightmapSettings.heightScale, 1.0f); // @todo
+			heightMapSettings.offset);
+		glm::vec3 scale = glm::vec3(1.0f, -heightMapSettings.heightScale, 1.0f); // @todo
 		heightMap->generateMesh(
 			scale,
 			vks::HeightMap::topologyTriangles,
-			heightmapSettings.levelOfDetail
+			heightMapSettings.levelOfDetail
 		);
 	}
 
@@ -231,11 +131,11 @@ public:
 		// Random distribution
 
 		const int dim = 30; // 24 241
-		const int maxTreeCount = heightmapSettings.treeDensity * heightmapSettings.treeDensity;
+		const int maxTreeCount = heightMapSettings.treeDensity * heightMapSettings.treeDensity;
 		std::random_device rndDevice;
 		std::default_random_engine prng(rndDevice());
 		std::uniform_real_distribution<float> distribution(0, (float)(vks::HeightMap::chunkSize - 1));
-		std::uniform_real_distribution<float> scaleDist(heightmapSettings.minTreeSize, heightmapSettings.maxTreeSize);
+		std::uniform_real_distribution<float> scaleDist(heightMapSettings.minTreeSize, heightMapSettings.maxTreeSize);
 		std::uniform_real_distribution<float> rotDist(0.0, 1.0);
 
 		for (int i = 0; i < maxTreeCount; i++) {
@@ -312,7 +212,7 @@ public:
 	std::vector<TerrainChunk*> terrainChunkgsUpdateList{};
 
 	InfiniteTerrain() {
-		chunkSize = heightmapSettings.mapChunkSize - 1;
+		chunkSize = heightMapSettings.mapChunkSize - 1;
 		chunksVisibleInViewDistance = round(maxViewDst / chunkSize);
 	}
 
@@ -355,11 +255,11 @@ public:
 					TerrainChunk* chunk = getChunk(viewedChunkCoord);
 					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize + 50.0f); // @todo
 				} else {
-					int l = heightmapSettings.levelOfDetail;
+					int l = heightMapSettings.levelOfDetail;
 					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
 					terrainChunks.push_back(newChunk);
 					terrainChunkgsUpdateList.push_back(newChunk);
-					heightmapSettings.levelOfDetail = l;
+					heightMapSettings.levelOfDetail = l;
 					std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
 					res = true;
 				}
@@ -370,14 +270,14 @@ public:
 
 	void updateChunks() {
 		for (auto& terrainChunk : terrainChunks) {
-			int l = heightmapSettings.levelOfDetail;
-			//heightmapSettings.levelOfDetail = 6;
-			heightmapSettings.offset.x = (float)terrainChunk->position.x * (float)(chunkSize);
-			heightmapSettings.offset.y = (float)terrainChunk->position.y * (float)(chunkSize);
+			int l = heightMapSettings.levelOfDetail;
+			//heightMapSettings.levelOfDetail = 6;
+			heightMapSettings.offset.x = (float)terrainChunk->position.x * (float)(chunkSize);
+			heightMapSettings.offset.y = (float)terrainChunk->position.y * (float)(chunkSize);
 			terrainChunk->updateHeightMap();
 			terrainChunk->updateTrees();
 			terrainChunk->hasValidMesh = true;
-			heightmapSettings.levelOfDetail = l;
+			heightMapSettings.levelOfDetail = l;
 		}
 	}
 
@@ -624,8 +524,8 @@ public:
 				std::lock_guard<std::mutex> guard(lock_guard);
 				for (size_t i = 0; i < infiniteTerrain.terrainChunkgsUpdateList.size(); i++) {
 					TerrainChunk* chunk = infiniteTerrain.terrainChunkgsUpdateList[i];
-					heightmapSettings.offset.x = (float)chunk->position.x * (float)(chunk->size);
-					heightmapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
+					heightMapSettings.offset.x = (float)chunk->position.x * (float)(chunk->size);
+					heightMapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
 					chunk->updateHeightMap();
 					chunk->updateTrees();
 					chunk->hasValidMesh = true;
@@ -681,9 +581,9 @@ public:
 		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-		heightmapSettings.waterColor[0] = uboWaterPlane.color.r;
-		heightmapSettings.waterColor[1] = uboWaterPlane.color.g;
-		heightmapSettings.waterColor[2] = uboWaterPlane.color.b;
+		heightMapSettings.waterColor[0] = uboWaterPlane.color.r;
+		heightMapSettings.waterColor[1] = uboWaterPlane.color.g;
+		heightMapSettings.waterColor[2] = uboWaterPlane.color.b;
 
 #if defined(_WIN32)
 		ShowCursor(false);
@@ -947,7 +847,7 @@ public:
 					}
 					cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-					models.trees[heightmapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
+					models.trees[heightMapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
 				}
 			}
 		}
@@ -1703,7 +1603,7 @@ public:
 
 	void updateUniformParams()
 	{
-		uniformDataParams.fogColor = glm::vec4(heightmapSettings.fogColor[0], heightmapSettings.fogColor[1], heightmapSettings.fogColor[2], 1.0f);
+		uniformDataParams.fogColor = glm::vec4(heightMapSettings.fogColor[0], heightMapSettings.fogColor[1], heightMapSettings.fogColor[2], 1.0f);
 		memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
 	}
 
@@ -1998,8 +1898,8 @@ public:
 		ImGui::Begin("Terrain", nullptr, ImGuiWindowFlags_None);
 		overlay->text("%d chunks in memory", infiniteTerrain.terrainChunks.size());
 		overlay->text("%d chunks visible", infiniteTerrain.getVisibleChunkCount());
-		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightmapSettings.mapChunkSize - 1));
-		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightmapSettings.mapChunkSize - 1));
+		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightMapSettings.mapChunkSize - 1));
+		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightMapSettings.mapChunkSize - 1));
 		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
 		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
 		ImGui::End();
@@ -2028,46 +1928,46 @@ public:
 		ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Terrain settings", nullptr, ImGuiWindowFlags_None);
-		overlay->sliderInt("Seed", &heightmapSettings.seed, 0, 128);
-		overlay->sliderFloat("Noise scale", &heightmapSettings.noiseScale, 0.0f, 128.0f);
-		overlay->sliderFloat("Height scale", &heightmapSettings.heightScale, 0.1f, 64.0f);
-		overlay->sliderFloat("Persistence", &heightmapSettings.persistence, 0.0f, 10.0f);
-		overlay->sliderFloat("Lacunarity", &heightmapSettings.lacunarity, 0.0f, 10.0f);
+		overlay->sliderInt("Seed", &heightMapSettings.seed, 0, 128);
+		overlay->sliderFloat("Noise scale", &heightMapSettings.noiseScale, 0.0f, 128.0f);
+		overlay->sliderFloat("Height scale", &heightMapSettings.heightScale, 0.1f, 64.0f);
+		overlay->sliderFloat("Persistence", &heightMapSettings.persistence, 0.0f, 10.0f);
+		overlay->sliderFloat("Lacunarity", &heightMapSettings.lacunarity, 0.0f, 10.0f);
 		
-		if (ImGui::ColorEdit4("Water color", heightmapSettings.waterColor)) {
-			uboWaterPlane.color.r = heightmapSettings.waterColor[0];
-			uboWaterPlane.color.g = heightmapSettings.waterColor[1];
-			uboWaterPlane.color.b = heightmapSettings.waterColor[2];
+		if (ImGui::ColorEdit4("Water color", heightMapSettings.waterColor)) {
+			uboWaterPlane.color.r = heightMapSettings.waterColor[0];
+			uboWaterPlane.color.g = heightMapSettings.waterColor[1];
+			uboWaterPlane.color.b = heightMapSettings.waterColor[2];
 		}
 
-		if (ImGui::ColorEdit4("Fog color", heightmapSettings.fogColor)) {
-			uniformDataParams.fogColor.r = heightmapSettings.fogColor[0];
-			uniformDataParams.fogColor.g = heightmapSettings.fogColor[1];
-			uniformDataParams.fogColor.b = heightmapSettings.fogColor[2];
+		if (ImGui::ColorEdit4("Fog color", heightMapSettings.fogColor)) {
+			uniformDataParams.fogColor.r = heightMapSettings.fogColor[0];
+			uniformDataParams.fogColor.g = heightMapSettings.fogColor[1];
+			uniformDataParams.fogColor.b = heightMapSettings.fogColor[2];
 			updateUniformParams();
 		}
 
-		overlay->comboBox("Tree type", &heightmapSettings.treeModelIndex, treeModels);
-		overlay->sliderInt("Tree density", &heightmapSettings.treeDensity, 1, 64);
-		overlay->sliderFloat("Min. tree size", &heightmapSettings.minTreeSize, 0.1f, heightmapSettings.maxTreeSize);
-		overlay->sliderFloat("Max. tree size", &heightmapSettings.maxTreeSize, heightmapSettings.minTreeSize, 5.0f);
-		//overlay->sliderInt("LOD", &heightmapSettings.levelOfDetail, 1, 6);
+		overlay->comboBox("Tree type", &heightMapSettings.treeModelIndex, treeModels);
+		overlay->sliderInt("Tree density", &heightMapSettings.treeDensity, 1, 64);
+		overlay->sliderFloat("Min. tree size", &heightMapSettings.minTreeSize, 0.1f, heightMapSettings.maxTreeSize);
+		overlay->sliderFloat("Max. tree size", &heightMapSettings.maxTreeSize, heightMapSettings.minTreeSize, 5.0f);
+		//overlay->sliderInt("LOD", &heightMapSettings.levelOfDetail, 1, 6);
 		if (overlay->button("Update heightmap")) {
 			updateHeightmap(false);
 		}
 		if (overlay->comboBox("Load preset", &presetIndex, presets)) {
-			heightmapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
-			loadSkySphere(heightmapSettings.skySphere);
+			heightMapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
+			loadSkySphere(heightMapSettings.skySphere);
 			for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-				uboTerrain.layers[i] = heightmapSettings.textureLayers[i];
+				uboTerrain.layers[i] = heightMapSettings.textureLayers[i];
 			}
 			infiniteTerrain.clear();
 			updateHeightmap(false);
 			viewChanged();
 			updateUniformParams();
-			uboWaterPlane.color.r = heightmapSettings.waterColor[0];
-			uboWaterPlane.color.g = heightmapSettings.waterColor[1];
-			uboWaterPlane.color.b = heightmapSettings.waterColor[2];
+			uboWaterPlane.color.r = heightMapSettings.waterColor[0];
+			uboWaterPlane.color.g = heightMapSettings.waterColor[1];
+			uboWaterPlane.color.b = heightMapSettings.waterColor[2];
 		}
 		ImGui::End();
 	}
