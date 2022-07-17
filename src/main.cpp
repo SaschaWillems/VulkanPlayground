@@ -70,19 +70,20 @@ public:
 	vks::Buffer instanceBuffer;
 	glm::ivec2 position;
 	glm::vec3 center;
+	glm::vec3 min;
+	glm::vec3 max;
 	int size;
 	bool hasValidMesh = false;
 	bool visible = false;
 	int treeInstanceCount;
 	
 	TerrainChunk(glm::ivec2 coords, int size) : size(size) {
-		position = coords;// *size;
-		//center = glm::vec3((float)coords.x * (float)size / 2.0f, 0.0f, (float)coords.y * (float)size / 2.0f);
+		position = coords;
 		center = glm::vec3(0.0f);
 		center.x = (float)coords.x * (float)size;
 		center.z = (float)coords.y * (float)size;
-		center.x += coords.x < 0 ? +(float)size / 2.0f : -(float)size / 2.0f;
-		center.y += coords.y < 0 ? +(float)size / 2.0f : -(float)size / 2.0f;
+		min = glm::vec3(center) - glm::vec3((float)size / 2.0f);
+		max = glm::vec3(center) + glm::vec3((float)size / 2.0f);
 		heightMap = new vks::HeightMap(defaultDevice, transferQueue);
 	};
 
@@ -244,7 +245,8 @@ public:
 		return count;
 	}
 
-	bool updateVisibleChunks() {
+	bool updateVisibleChunks(Camera &camera) {
+
 		bool res = false;
 		int currentChunkCoordX = (int)round(viewerPosition.x / (float)chunkSize);
 		int currentChunkCoordY = (int)round(viewerPosition.y / (float)chunkSize);
@@ -253,7 +255,7 @@ public:
 				glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
 				if (chunkPresent(viewedChunkCoord)) {
 					TerrainChunk* chunk = getChunk(viewedChunkCoord);
-					chunk->visible = frustum.checkSphere(chunk->center, (float)chunkSize + 50.0f); // @todo
+					chunk->visible = true;
 				} else {
 					int l = heightMapSettings.levelOfDetail;
 					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
@@ -261,10 +263,17 @@ public:
 					terrainChunkgsUpdateList.push_back(newChunk);
 					heightMapSettings.levelOfDetail = l;
 					std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
+					std::cout << "Center is " << newChunk->center.x << " / " << newChunk->center.y << "\n";
 					res = true;
 				}
 			}
 		}
+
+		// Update visibility
+		for (auto& chunk : terrainChunks) {
+			chunk->visible = frustum.checkBox(chunk->center, chunk->min, chunk->max);
+		}
+
 		return res;
 	}
 
@@ -529,6 +538,8 @@ public:
 					heightMapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
 					chunk->updateHeightMap();
 					chunk->updateTrees();
+					chunk->min.y = chunk->heightMap->minHeight;
+					chunk->max.y = chunk->heightMap->maxHeight;
 					chunk->hasValidMesh = true;
 				}
 				std::cout << infiniteTerrain.terrainChunkgsUpdateList.size() << " Terrain chunks created\n";
@@ -547,10 +558,18 @@ public:
 		settings.overlay = true;
 		timerSpeed *= 0.05f;
 
+		//camera.setPosition(glm::vec3(1021.0f, -32.0f, 526.0f));
+		//camera.rotate(133.75f, 6.25f);
+
+		// Frustumc ulld ebug
+		//camera.setPosition(glm::vec3(83.86f, -17.9753284f, 90.0f));
+//		camera.rotate(-318.62f, 5.0f);
+
 		camera.setPosition(glm::vec3(0.0f, -25.0f, 0.0f));
 
-		camera.setPosition(glm::vec3(1021.0f, -32.0f, 526.0f));
-		camera.rotate(133.75f, 6.25f);
+
+		camera.update(0.0f);
+		frustum.update(camera.matrices.perspective * camera.matrices.view);
 
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;
@@ -792,6 +811,8 @@ public:
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
 				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+				//pos.x = 0.0f;
+				//pos.y = 0.0f;
 				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
 					pos.y += waterPosition * 2.0f;
 					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_BACK_BIT);
@@ -842,13 +863,20 @@ public:
 	}
 
 	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
+		vks::Frustum cascadeFrustum;
+		cascadeFrustum.update(cascades[cascadeIndex].viewProjMatrix);
+
 		CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
 		cb->bindPipeline(pipelines.depthpass);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
+		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
+
 		// Terrain
 		// @todo: limit distance
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+			//if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+			bool chunkVisible = terrainChunk->hasValidMesh && cascadeFrustum.checkSphere(terrainChunk->center, (float)infiniteTerrain.chunkSize);
+			if (chunkVisible) {
 				pushConst.position = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
 				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
 				terrainChunk->draw(cb);
@@ -856,11 +884,11 @@ public:
 		}
 		// Trees
 		// @todo: limit distance
-		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
 		cb->bindPipeline(pipelines.depthpassTree);
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+			bool chunkVisible = terrainChunk->hasValidMesh && cascadeFrustum.checkSphere(terrainChunk->center, (float)infiniteTerrain.chunkSize);
+			if (chunkVisible) {
 				VkDeviceSize offsets[1] = { 0 };
 				vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
 				pushConst.position = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
@@ -1025,12 +1053,12 @@ public:
 
 			glm::vec3 frustumCorners[8] = {
 				glm::vec3(-1.0f,  1.0f, -1.0f),
-				glm::vec3(1.0f,  1.0f, -1.0f),
-				glm::vec3(1.0f, -1.0f, -1.0f),
+				glm::vec3( 1.0f,  1.0f, -1.0f),
+				glm::vec3( 1.0f, -1.0f, -1.0f),
 				glm::vec3(-1.0f, -1.0f, -1.0f),
 				glm::vec3(-1.0f,  1.0f,  1.0f),
-				glm::vec3(1.0f,  1.0f,  1.0f),
-				glm::vec3(1.0f, -1.0f,  1.0f),
+				glm::vec3( 1.0f,  1.0f,  1.0f),
+				glm::vec3( 1.0f, -1.0f,  1.0f),
 				glm::vec3(-1.0f, -1.0f,  1.0f),
 			};
 
@@ -1149,7 +1177,7 @@ public:
 	void generateTerrain()
 	{
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		infiniteTerrain.updateVisibleChunks();
+		infiniteTerrain.updateVisibleChunks(camera);
 	}
 
 	void updateHeightmap(bool firstRun)
@@ -1640,10 +1668,6 @@ public:
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
 
-		if (!fixFrustum) {
-			frustum.update(camera.matrices.perspective * camera.matrices.view);
-		}
-
 		// Mesh
 		memcpy(uniformBuffers.vsShared.mapped, &uboShared, sizeof(uboShared));
 
@@ -1727,7 +1751,7 @@ public:
 		
 		// @todo
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		infiniteTerrain.updateVisibleChunks();
+		infiniteTerrain.updateVisibleChunks(camera);
 		
 		prepared = true;
 	}
@@ -1847,8 +1871,11 @@ public:
 		updateUniformBuffers();
 		updateUniformBufferOffscreen();
 		// @todo
+		if (!fixFrustum) {
+			frustum.update(camera.matrices.perspective * camera.matrices.view);
+		}
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		infiniteTerrain.updateVisibleChunks();
+		infiniteTerrain.updateVisibleChunks(camera);
 	}
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
@@ -1915,6 +1942,7 @@ public:
 		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightMapSettings.mapChunkSize - 1));
 		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
 		overlay->text("cam x = %.2f / z =%.2f", camera.position.x, camera.position.z);
+		overlay->text("cam yaw = %.2f / pitch =%.2f", camera.yaw, camera.pitch);
 		ImGui::End();
 
 		bool updateParamsReq = false;
