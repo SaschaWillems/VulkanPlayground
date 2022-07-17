@@ -359,6 +359,7 @@ public:
 		Pipeline* sky;
 		Pipeline* skyOffscreen;
 		Pipeline* depthpass;
+		Pipeline* depthpassTree;
 		Pipeline* wireframe;
 		Pipeline* tree;
 		Pipeline* treeOffscreen;
@@ -416,7 +417,7 @@ public:
 		glm::mat4 model;
 		glm::vec4 cameraPos;
 		glm::vec4 lightDir;
-		glm::vec4 color = glm::vec4(1.0f);// glm::vec4(0.75, 0.75, 1.0, 1.0);
+		glm::vec4 color = glm::vec4(1.0f);
 		float time;
 	} uboWaterPlane;
 
@@ -541,9 +542,6 @@ public:
 		title = "Vulkan infinite terrain";
 		camera.type = Camera::CameraType::firstperson;
 		camera.setPerspective(45.0f, (float)width / (float)height, zNear, zFar);
-		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
-		//camera.setTranslation(glm::vec3(18.0f, 22.5f, 57.5f));
-		camera.setTranslation(glm::vec3(0.0f, 1.0f, -6.0f));
 		camera.movementSpeed = 7.5f * 5.0f;
 		camera.rotationSpeed = 0.1f;
 		settings.overlay = true;
@@ -554,7 +552,6 @@ public:
 		camera.setPosition(glm::vec3(1021.0f, -32.0f, 526.0f));
 		camera.rotate(133.75f, 6.25f);
 
-
 		// The scene shader uses a clipping plane, so this feature has to be enabled
 		enabledFeatures.shaderClipDistance = VK_TRUE;
 		enabledFeatures.samplerAnisotropy = VK_TRUE;
@@ -563,16 +560,8 @@ public:
 
 		// @todo
 		float radius = 20.0f;
-		lightPos = glm::vec4(20.0f, -15.0f, -15.0f, 0.0f) * radius;
 		lightPos = glm::vec4(-20.0f, -15.0f, -15.0f, 0.0f) * radius;
 		uboTerrain.lightDir = glm::normalize(lightPos);
-
-		uboTerrain.layers[0] = glm::vec4(0.038f, 0.038f, glm::vec2(0.0));
-		uboTerrain.layers[1] = glm::vec4(0.0f, 0.213f, glm::vec2(0.0));
-		uboTerrain.layers[2] = glm::vec4(0.266f, 0.212f, glm::vec2(0.0));
-		uboTerrain.layers[3] = glm::vec4(0.530f, 0.152f, glm::vec2(0.0));
-		uboTerrain.layers[4] = glm::vec4(0.712f, 0.273f, glm::vec2(0.0));
-		uboTerrain.layers[5] = glm::vec4(0.696f, 0.303f, glm::vec2(0.0));
 
 		// Spawn background thread that creates newly visible terrain chunkgs
 		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
@@ -581,12 +570,11 @@ public:
 		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-		heightMapSettings.waterColor[0] = uboWaterPlane.color.r;
-		heightMapSettings.waterColor[1] = uboWaterPlane.color.g;
-		heightMapSettings.waterColor[2] = uboWaterPlane.color.b;
+		heightMapSettings.loadFromFile(getAssetPath() + "presets/default.txt");
+		memcpy(uboTerrain.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 
 #if defined(_WIN32)
-		ShowCursor(false);
+		//ShowCursor(false);
 #endif
 	}
 
@@ -710,7 +698,7 @@ public:
 		});
 
 		offscreenPass.renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
-		offscreenPass.renderPass->setDepthStencilClearValue(1, 1.0f, 0.0f);
+		offscreenPass.renderPass->setDepthStencilClearValue(1, 1.0f, 0);
 		offscreenPass.renderPass->create();
 
 		offscreenPass.width = FB_DIM;
@@ -857,12 +845,28 @@ public:
 		CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
 		cb->bindPipeline(pipelines.depthpass);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
+		// Terrain
+		// @todo: limit distance
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
-			pushConst.position = glm::vec4(pos, 0.0f);
-			cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
-			vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-			terrainChunk->draw(cb);
+			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+				pushConst.position = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
+				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
+				terrainChunk->draw(cb);
+			}
+		}
+		// Trees
+		// @todo: limit distance
+		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
+		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
+		cb->bindPipeline(pipelines.depthpassTree);
+		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+				VkDeviceSize offsets[1] = { 0 };
+				vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
+				pushConst.position = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
+				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
+				models.trees[heightMapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, depthPass.pipelineLayout->handle, 1, terrainChunk->treeInstanceCount);
+			}
 		}
 	}
 
@@ -927,7 +931,7 @@ public:
 			VK_DEPENDENCY_BY_REGION_BIT,
 			});
 
-		depthPass.renderPass->setDepthStencilClearValue(0, 1.0f, 0.0f);
+		depthPass.renderPass->setDepthStencilClearValue(0, 1.0f, 0);
 		depthPass.renderPass->create();
 
 		/*
@@ -1079,9 +1083,6 @@ public:
 			Uses multiple passes with each pass rendering the scene to the cascade's depth image layer
 			Could be optimized using a geometry shader (and layered frame buffer) on devices that support geometry shaders
 		*/
-		VkClearValue clearValues[1];
-		clearValues[0].depthStencil = { 1.0f, 0 };
-
 		cb->setViewport(0, 0, (float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
 		cb->setScissor(0, 0, SHADOWMAP_DIM, SHADOWMAP_DIM);
 		// One pass per cascade
@@ -1242,6 +1243,7 @@ public:
 
 		depthPass.pipelineLayout = new PipelineLayout(device);
 		depthPass.pipelineLayout->addLayout(depthPass.descriptorSetLayout);
+		depthPass.pipelineLayout->addLayout(vkglTF::descriptorSetLayoutImage);
 		depthPass.pipelineLayout->addPushConstantRange(sizeof(CascadePushConstBlock), 0, VK_SHADER_STAGE_VERTEX_BIT);
 		depthPass.pipelineLayout->create();
 
@@ -1570,6 +1572,16 @@ public:
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/depthpass.vert.spv");
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/terrain_depthpass.frag.spv");
 		pipelines.depthpass->create();
+		// Depth pres pass pipeline for glTF models
+		pipelines.depthpassTree = new Pipeline(device);
+		pipelines.depthpassTree->setCreateInfo(pipelineCI);
+		pipelines.depthpassTree->setVertexInputState(&vertexInputStateModelInstanced);
+		pipelines.depthpassTree->setCache(pipelineCache);
+		pipelines.depthpassTree->setLayout(depthPass.pipelineLayout);
+		pipelines.depthpassTree->setRenderPass(depthPass.renderPass);
+		pipelines.depthpassTree->addShader(getAssetPath() + "shaders/tree_depthpass.vert.spv");
+		pipelines.depthpassTree->addShader(getAssetPath() + "shaders/tree_depthpass.frag.spv");
+		pipelines.depthpassTree->create();
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
@@ -1603,6 +1615,7 @@ public:
 
 	void updateUniformParams()
 	{
+		uniformDataParams.shadows = renderShadows;
 		uniformDataParams.fogColor = glm::vec4(heightMapSettings.fogColor[0], heightMapSettings.fogColor[1], heightMapSettings.fogColor[2], 1.0f);
 		memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
 	}
@@ -1909,7 +1922,10 @@ public:
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Render options", nullptr, ImGuiWindowFlags_None);
 		updateParamsReq |= overlay->checkBox("Fog", &uniformDataParams.fog);
-		updateParamsReq |= overlay->checkBox("Shadows", &uniformDataParams.shadows);
+		updateParamsReq |= overlay->checkBox("Shadows", &renderShadows);
+		if (updateParamsReq) {
+			updateUniformParams();
+		}
 		ImGui::End();
 
 		ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiSetCond_FirstUseEver);
@@ -1958,9 +1974,7 @@ public:
 		if (overlay->comboBox("Load preset", &presetIndex, presets)) {
 			heightMapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
 			loadSkySphere(heightMapSettings.skySphere);
-			for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-				uboTerrain.layers[i] = heightMapSettings.textureLayers[i];
-			}
+			memcpy(uboTerrain.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 			infiniteTerrain.clear();
 			updateHeightmap(false);
 			viewChanged();

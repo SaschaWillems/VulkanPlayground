@@ -4,6 +4,7 @@ layout (location = 0) in vec3 inPos;
 layout (location = 2) in vec2 inUV;
 
 // todo: pass via specialization constant
+// @todo: move to include
 #define SHADOW_MAP_CASCADE_COUNT 4
 
 layout(push_constant) uniform PushConsts {
@@ -16,10 +17,6 @@ layout (binding = 0) uniform UBO {
 } ubo;
 
 layout (location = 0) out vec2 outUV;
-
-out gl_PerVertex {
-	vec4 gl_Position;   
-};
 
 void main()
 {

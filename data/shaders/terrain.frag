@@ -143,19 +143,19 @@ void main()
 
 	float shadow = 1.0f;
 	bool enablePCF = false;
-//	if (pushConsts.shadows > 0) {
-//		if (enablePCF) {
-//			shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
-//		} else {
-//			shadow = textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
-//		}
-//		if (inPos.y > 0.0f) {
-//			shadow = 1.0f;
-//		}
-//	} else {
-//		shadow =  1.0f;
-//	}
-//
+	if (params.shadows > 0) {
+		if (enablePCF) {
+			shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
+		} else {
+			shadow = textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
+		}
+		if (inPos.y > 0.0f) {
+			shadow = 1.0f;
+		}
+	} else {
+		shadow =  1.0f;
+	}
+
 	// Directional light
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(-ubo.lightDir.xyz);

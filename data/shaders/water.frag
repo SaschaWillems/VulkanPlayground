@@ -56,7 +56,7 @@ const mat4 biasMat = mat4(
 #include "includes/fog.glsl"
 #include "includes/shadow.glsl"
 
-float shadowMapping()
+float shadowMapping(vec4 dist)
 {
 	// Get cascade index for the current fragment's view position
 	uint cascadeIndex = 0;
@@ -67,7 +67,7 @@ float shadowMapping()
 	}
 
 	// Depth compare for shadowing
-	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inLPos, 1.0);	
+	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inLPos +dist.xyz, 1.0);	
 
 	float shadow = 0;
 	bool enablePCF = false;
@@ -112,11 +112,13 @@ void main()
 
 	vec4 color = ubo.color;;
 	if (gl_FrontFacing) {
-//		float shadow = shadowMapping();
 		float shadow = 1.0;
-		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);// * (ambient + shadow) * waterColor;
-		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);// * (ambient + shadow);
-		color *= mix(refraction, reflection, fresnel * 1.25);
+		if (params.shadows > 0) {
+			shadow = shadowMapping(dudv);
+		}
+		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st) * shadow;// * (ambient + shadow) * waterColor;
+		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st) * shadow;// * (ambient + shadow);
+		color *= mix(refraction, reflection, fresnel);
 	}
 
 	if (params.fog == 1) {
