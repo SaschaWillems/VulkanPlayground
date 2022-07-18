@@ -62,13 +62,12 @@ const mat4 biasMat = mat4(
 
 float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex)
 {
-	float shadow = 1.0;
+	float shadow = 0.0;
 	float bias = 0.005;
-
 	if ( shadowCoord.z > -1.0 && shadowCoord.z < 1.0 ) {
 		float dist = texture(shadowMap, vec3(shadowCoord.st + offset, cascadeIndex)).r;
 		if (shadowCoord.w > 0 && dist < shadowCoord.z - bias) {
-			shadow = ambient;
+			shadow = 1.0;
 		}
 	}
 	return shadow;
@@ -106,14 +105,13 @@ vec3 triPlanarBlend(vec3 worldNormal){
 vec3 sampleTerrainLayer()
 {
 	vec3 color = vec3(0.0);
-	float height = inTerrainHeight;
 	float texRepeat = 0.125f;
 	vec3 blend = triPlanarBlend(inNormal);
 	for (int i = 0; i < ubo.layers.length(); i++) {
 		float start = ubo.layers[i].x - ubo.layers[i].y / 2.0;
 		float end = ubo.layers[i].x + ubo.layers[i].y / 2.0;
 		float range = end - start;
-		float weight = (range - abs(height - end)) / range;
+		float weight = (range - abs(inTerrainHeight - end)) / range;
 		weight = max(0.0, weight);
 		// Triplanar mapping
 		vec3 xaxis = texture(samplerLayers, vec3(inPos.yz * texRepeat, i)).rgb;
@@ -130,65 +128,37 @@ vec3 sampleTerrainLayer()
 
 void main()
 {
-	// Get cascade index for the current fragment's view position
-	uint cascadeIndex = 0;
-	for(uint i = 0; i < SHADOW_MAP_CASCADE_COUNT - 1; ++i) {
-		if(inViewPos.z < uboCSM.cascadeSplits[i]) {	
-			cascadeIndex = i + 1;
-		}
-	}
 
-	// Depth compare for shadowing
-	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inPos, 1.0);	
-
-	float shadow = 1.0f;
+	// Shadows
+	float shadow = 0.0f;
 	bool enablePCF = false;
 	if (params.shadows > 0) {
+		// Get cascade index for the current fragment's view position
+		uint cascadeIndex = 0;
+		for(uint i = 0; i < SHADOW_MAP_CASCADE_COUNT - 1; ++i) {
+			if(inViewPos.z < uboCSM.cascadeSplits[i]) {	
+				cascadeIndex = i + 1;
+			}
+		}
+		// Depth compare for shadowing
+		vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inPos, 1.0);	
 		if (enablePCF) {
 			shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
 		} else {
 			shadow = textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
 		}
-		if (inPos.y > 0.0f) {
-			shadow = 1.0f;
-		}
-	} else {
-		shadow =  1.0f;
 	}
 
 	// Directional light
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(-ubo.lightDir.xyz);
 	float diffuse = dot(N, L);
-	vec3 color = (ambient.rrr + (shadow) * (diffuse/* + specular*/)) * sampleTerrainLayer();
-//	vec3 color = (ambient.rrr + (diffuse/* + specular*/)) * sampleTerrainLayer();
-	outFragColor = vec4(color, 1.0);
-	// Apply fog
-	outFragColor.rgb = applyFog(color);
+	vec3 color = (ambient + (1.0 - shadow) * diffuse) * sampleTerrainLayer();
 
 	if (params.fog == 1) {
-		outFragColor.rgb = applyFog(color);
+		outFragColor = vec4(applyFog(color), 1.0);
 	} else {
 		outFragColor = vec4(color, 1.0);
-	}
-
-	// Color cascades (if enabled)
-	bool colorCascades = false;
-	if (colorCascades) {
-		switch(cascadeIndex) {
-			case 0 : 
-				outFragColor.rgb *= vec3(1.0f, 0.25f, 0.25f);
-				break;
-			case 1 : 
-				outFragColor.rgb *= vec3(0.25f, 1.0f, 0.25f);
-				break;
-			case 2 : 
-				outFragColor.rgb *= vec3(0.25f, 0.25f, 1.0f);
-				break;
-			case 3 : 
-				outFragColor.rgb *= vec3(1.0f, 1.0f, 0.25f);
-				break;
-		}
 	}
 
 }

@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_multiview : enable
 
 layout (location = 0) in vec3 inPos;
 layout (location = 2) in vec2 inUV;
@@ -22,5 +23,5 @@ void main()
 {
 	outUV = inUV;
 	vec3 pos = inPos + pushConsts.position.xyz;
-	gl_Position =  ubo.cascadeViewProjMat[pushConsts.cascadeIndex] * vec4(pos, 1.0);
+	gl_Position =  ubo.cascadeViewProjMat[gl_ViewIndex] * vec4(pos, 1.0);
 }

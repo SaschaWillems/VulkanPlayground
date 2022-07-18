@@ -30,7 +30,7 @@ namespace vks
 		/** @brief Features of the physical device that an application can use to check if a feature is supported */
 		VkPhysicalDeviceFeatures features;
 		/** @brief Features that have been enabled for use on the physical device */
-		VkPhysicalDeviceFeatures enabledFeatures;
+		VkPhysicalDeviceFeatures2 enabledFeatures;
 		/** @brief Memory types and heaps of the physical device */
 		VkPhysicalDeviceMemoryProperties memoryProperties;
 		/** @brief Queue family properties of the physical device */
@@ -215,7 +215,7 @@ namespace vks
 		*
 		* @return VkResult of the device creation call
 		*/
-		VkResult createLogicalDevice(VkPhysicalDeviceFeatures enabledFeatures, std::vector<const char*> enabledExtensions, void* pNextChain, bool useSwapChain = true, VkQueueFlags requestedQueueTypes = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT)
+		VkResult createLogicalDevice(VkPhysicalDeviceFeatures2 enabledFeatures, std::vector<const char*> enabledExtensions, void* pNextChain, bool useSwapChain = true, VkQueueFlags requestedQueueTypes = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT)
 		{			
 			// Desired queues need to be requested upon logical device creation
 			// Due to differing queue family configurations of Vulkan implementations this can be a bit tricky, especially if the application
@@ -241,7 +241,7 @@ namespace vks
 			}
 			else
 			{
-				queueFamilyIndices.graphics = VK_NULL_HANDLE;
+				queueFamilyIndices.graphics = 0;
 			}
 
 			// Dedicated compute queue
@@ -298,13 +298,14 @@ namespace vks
 			deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 			deviceCreateInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());;
 			deviceCreateInfo.pQueueCreateInfos = queueCreateInfos.data();
-			deviceCreateInfo.pEnabledFeatures = &enabledFeatures;
+			deviceCreateInfo.pNext = &enabledFeatures;
+			//deviceCreateInfo.pEnabledFeatures = &enabledFeatures;
 		
 			// If a pNext(Chain) has been passed, we need to add it to the device creation info
 			if (pNextChain) {
-				VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
+				VkPhysicalDeviceFeatures2 physicalDeviceFeatures2 = enabledFeatures;
 				physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-				physicalDeviceFeatures2.features = enabledFeatures;
+				//physicalDeviceFeatures2.features = enabledFeatures;
 				physicalDeviceFeatures2.pNext = pNextChain;
 				deviceCreateInfo.pEnabledFeatures = nullptr;
 				deviceCreateInfo.pNext = &physicalDeviceFeatures2;
@@ -456,7 +457,7 @@ namespace vks
 		*/
 		void copyBuffer(vks::Buffer *src, vks::Buffer *dst, VkQueue queue, VkBufferCopy *copyRegion = nullptr)
 		{
-			assert(dst->size <= src->size);
+			//assert(dst->size <= src->size);
 			assert(src->buffer);
 			VkCommandBuffer copyCmd = createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
 			VkBufferCopy bufferCopy{};

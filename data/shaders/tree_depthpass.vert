@@ -5,6 +5,7 @@
 
 #version 450 core
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_multiview : enable
 
 #include "includes/constants.glsl"
 
@@ -60,10 +61,9 @@ void main(void)
 	
 	mat3 rotMat = mz * my * mx;
 
-
 	vec4 pos = vec4(inPos * rotMat, 1.0);
 	pos.xyz *= instanceScale;
 	pos.xyz += instancePos + pushConsts.position.xyz;
 
-	gl_Position = ubo.cascadeViewProjMat[pushConsts.cascadeIndex] * pos;
+	gl_Position = ubo.cascadeViewProjMat[gl_ViewIndex] * pos;
 }

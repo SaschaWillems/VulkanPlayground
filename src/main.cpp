@@ -38,15 +38,8 @@
 #include "HeightMapSettings.h"
 
 #define ENABLE_VALIDATION false
-
 #define FB_DIM 1024
-
-#if defined(__ANDROID__)
-#define SHADOWMAP_DIM 2048
-#else
-#define SHADOWMAP_DIM 8192
-#endif
-
+#define SHADOWMAP_DIM 4096
 #define SHADOW_MAP_CASCADE_COUNT 4
 
 vks::VulkanDevice *defaultDevice;
@@ -313,7 +306,7 @@ public:
 	bool debugDisplayRefraction = false;
 	bool displayWaterPlane = true;
 	bool displayWireFrame = false;
-	bool renderShadows = false;
+	bool renderShadows = true;
 	bool fixFrustum = false;
 	bool hasExtMemoryBudget = false;
 
@@ -525,6 +518,8 @@ public:
 		}
 	};
 	std::array<Cascade, SHADOW_MAP_CASCADE_COUNT> cascades;
+	VkImageView cascadesView;
+	VkFramebuffer cascadesFramebuffer;
 
 	std::mutex lock_guard;
 
@@ -576,6 +571,7 @@ public:
 		enabledFeatures.samplerAnisotropy = VK_TRUE;
 		enabledFeatures.depthClamp = VK_TRUE;
 		enabledFeatures.fillModeNonSolid = VK_TRUE;
+		enabledFeatures11.multiview = VK_TRUE;
 
 		// @todo
 		float radius = 20.0f;
@@ -869,13 +865,13 @@ public:
 		CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
 		cb->bindPipeline(pipelines.depthpass);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
-		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
+		//vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
 
 		// Terrain
 		// @todo: limit distance
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 			//if (terrainChunk->visible && terrainChunk->hasValidMesh) {
-			bool chunkVisible = terrainChunk->hasValidMesh && cascadeFrustum.checkSphere(terrainChunk->center, (float)infiniteTerrain.chunkSize);
+			bool chunkVisible = terrainChunk->hasValidMesh && terrainChunk->visible;
 			if (chunkVisible) {
 				pushConst.position = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
 				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
@@ -887,7 +883,7 @@ public:
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
 		cb->bindPipeline(pipelines.depthpassTree);
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			bool chunkVisible = terrainChunk->hasValidMesh && cascadeFrustum.checkSphere(terrainChunk->center, (float)infiniteTerrain.chunkSize);
+			bool chunkVisible = terrainChunk->hasValidMesh && terrainChunk->visible;
 			if (chunkVisible) {
 				VkDeviceSize offsets[1] = { 0 };
 				vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
@@ -959,6 +955,17 @@ public:
 			VK_DEPENDENCY_BY_REGION_BIT,
 			});
 
+		const uint32_t viewMask = 0b00001111;
+		const uint32_t correlationMask = 0b00001111;
+
+		VkRenderPassMultiviewCreateInfo renderPassMultiviewCI{};
+		renderPassMultiviewCI.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
+		renderPassMultiviewCI.subpassCount = 1;
+		renderPassMultiviewCI.pViewMasks = &viewMask;
+		renderPassMultiviewCI.correlationMaskCount = 1;
+		renderPassMultiviewCI.pCorrelationMasks = &correlationMask;
+
+		depthPass.renderPass->setMultiview(renderPassMultiviewCI);
 		depthPass.renderPass->setDepthStencilClearValue(0, 1.0f, 0);
 		depthPass.renderPass->create();
 
@@ -983,24 +990,55 @@ public:
 		depth.view->create();
 
 		// One image and framebuffer per cascade
-		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
-			// Image view for this cascade's layer (inside the depth map) this view is used to render to that specific depth image layer
-			cascades[i].view = new ImageView(vulkanDevice);
-			cascades[i].view->setImage(depth.image);
-			cascades[i].view->setType(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
-			cascades[i].view->setFormat(depthFormat);
-			cascades[i].view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, i, 1 });
-			cascades[i].view->create();
-			// Framebuffer
-			VkFramebufferCreateInfo framebufferInfo = vks::initializers::framebufferCreateInfo();
-			framebufferInfo.renderPass = depthPass.renderPass->handle;
-			framebufferInfo.attachmentCount = 1;
-			framebufferInfo.pAttachments = &cascades[i].view->handle;
-			framebufferInfo.width = SHADOWMAP_DIM;
-			framebufferInfo.height = SHADOWMAP_DIM;
-			framebufferInfo.layers = 1;
-			VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cascades[i].frameBuffer));
-		}
+		//for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+		//	// Image view for this cascade's layer (inside the depth map) this view is used to render to that specific depth image layer
+		//	cascades[i].view = new ImageView(vulkanDevice);
+		//	cascades[i].view->setImage(depth.image);
+		//	cascades[i].view->setType(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+		//	cascades[i].view->setFormat(depthFormat);
+		//	cascades[i].view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, i, 1 });
+		//	cascades[i].view->create();
+		//	// Framebuffer
+		//	VkFramebufferCreateInfo framebufferInfo = vks::initializers::framebufferCreateInfo();
+		//	framebufferInfo.renderPass = depthPass.renderPass->handle;
+		//	framebufferInfo.attachmentCount = 1;
+		//	framebufferInfo.pAttachments = &cascades[i].view->handle;
+		//	framebufferInfo.width = SHADOWMAP_DIM;
+		//	framebufferInfo.height = SHADOWMAP_DIM;
+		//	framebufferInfo.layers = 1;
+		//	VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cascades[i].frameBuffer));
+		//}
+
+		// Image view for this cascade's layer (inside the depth map) this view is used to render to that specific depth image layer
+		VkImageViewCreateInfo imageViewCI = vks::initializers::imageViewCreateInfo();
+		imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+		imageViewCI.format = depthFormat;
+		imageViewCI.subresourceRange = {};
+		imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		imageViewCI.subresourceRange.levelCount = 1;
+		imageViewCI.subresourceRange.layerCount = SHADOW_MAP_CASCADE_COUNT;
+		imageViewCI.image = depth.image->handle;
+		VK_CHECK_RESULT(vkCreateImageView(device, &imageViewCI, nullptr, &cascadesView));
+
+		//cascades[i].view = new ImageView(vulkanDevice);
+		//cascades[i].view->setImage(depth.image);
+		//cascades[i].view->setType(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+		//cascades[i].view->setFormat(depthFormat);
+		//cascades[i].view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, i, 1 });
+		//cascades[i].view->create();
+		// 
+		// Framebuffer
+		VkImageView attachments[1];
+		attachments[0] = cascadesView;
+
+		VkFramebufferCreateInfo framebufferInfo = vks::initializers::framebufferCreateInfo();
+		framebufferInfo.renderPass = depthPass.renderPass->handle;
+		framebufferInfo.attachmentCount = 1;
+		framebufferInfo.pAttachments = attachments;
+		framebufferInfo.width = SHADOWMAP_DIM;
+		framebufferInfo.height = SHADOWMAP_DIM;
+		framebufferInfo.layers = 1;
+		VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cascadesFramebuffer));
 
 		// Shared sampler for cascade deoth reads
 		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
@@ -1114,12 +1152,16 @@ public:
 		cb->setViewport(0, 0, (float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
 		cb->setScissor(0, 0, SHADOWMAP_DIM, SHADOWMAP_DIM);
 		// One pass per cascade
-		// The layer that this pass renders to is defined by the cascade's image view (selected via the cascade's decsriptor set)
-		for (uint32_t j = 0; j < SHADOW_MAP_CASCADE_COUNT; j++) {
-			cb->beginRenderPass(depthPass.renderPass, cascades[j].frameBuffer);
-			drawShadowCasters(cb, j);
-			cb->endRenderPass();
-		}
+		//// The layer that this pass renders to is defined by the cascade's image view (selected via the cascade's decsriptor set)
+		//for (uint32_t j = 0; j < SHADOW_MAP_CASCADE_COUNT; j++) {
+		//	cb->beginRenderPass(depthPass.renderPass, cascades[j].frameBuffer);
+		//	drawShadowCasters(cb, j);
+		//	cb->endRenderPass();
+		//}
+
+		cb->beginRenderPass(depthPass.renderPass, cascadesFramebuffer);
+		drawShadowCasters(cb, 0);
+		cb->endRenderPass();
 	}
 
 	/*
@@ -1554,6 +1596,7 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthWriteEnable = VK_TRUE;
 
+		// @todo: not sure: blend or discard
 		blendAttachmentState.blendEnable = VK_TRUE;
 		blendAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 		blendAttachmentState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -2018,6 +2061,19 @@ public:
 	{
 		ImGuiIO& io = ImGui::GetIO();
 		handled = io.WantCaptureMouse;
+	}
+
+	virtual void keyPressed(uint32_t key)
+	{
+		float m = (GetKeyState(VK_SHIFT) & 0x8000) ? -1.0f : 1.0f;
+		if (key == 88) {
+			camera.setPosition(camera.position + glm::vec3(m * 240.0f, 0.0f, 0.0f));
+			viewChanged();
+		}
+		if (key == 89) {
+			camera.setPosition(camera.position + glm::vec3(0.0f, 0.0f, m * 240.0f));
+			viewChanged();
+		}
 	}
 
 };

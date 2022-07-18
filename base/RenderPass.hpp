@@ -23,6 +23,8 @@ private:
 	std::vector<VkSubpassDependency> subpassDependencies;
 	std::vector<VkSubpassDescription> subpassDescriptions;
 	std::vector<VkClearValue> clearValues;
+	VkRenderPassMultiviewCreateInfo renderPassMultiviewCI{};
+	bool multiView = false;
 public:
 	VkRenderPass handle;
 	RenderPass(VkDevice device) {
@@ -30,6 +32,10 @@ public:
 	}
 	~RenderPass() {
 		// @todo
+	}
+	void setMultiview(VkRenderPassMultiviewCreateInfo multiviewCI) {
+		renderPassMultiviewCI = multiviewCI;
+		multiView = true;
 	}
 	void create() {
 		VkRenderPassCreateInfo CI{};
@@ -40,6 +46,9 @@ public:
 		CI.pSubpasses = subpassDescriptions.data();
 		CI.dependencyCount = static_cast<uint32_t>(subpassDependencies.size());
 		CI.pDependencies = subpassDependencies.data();
+		if (multiView) {
+			CI.pNext = &renderPassMultiviewCI;
+		}
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &CI, nullptr, &handle));
 	}
 	VkRenderPassBeginInfo getBeginInfo() {
