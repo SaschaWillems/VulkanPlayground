@@ -20,7 +20,7 @@ layout(push_constant) uniform PushConsts {
 
 void main(void)
 {
-	gl_Position = ubo.projection * ubo.modelview * pushConsts.scale * vec4(inPos.xyz, 1.0);
+	gl_Position = ubo.projection * mat4(mat3(ubo.modelview)) * pushConsts.scale * vec4(inPos.xyz, 1.0);
 	outUV = inUV;
 	outUV.t = 1.0f - outUV.t;
 }

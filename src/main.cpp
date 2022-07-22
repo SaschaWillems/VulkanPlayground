@@ -388,7 +388,6 @@ public:
 		vks::Buffer vsOffScreen;
 		vks::Buffer vsDebugQuad;
 		vks::Buffer terrain;
-		vks::Buffer sky;
 		vks::Buffer CSM;
 		vks::Buffer params;
 	} uniformBuffers;
@@ -397,7 +396,7 @@ public:
 		glm::mat4 projection;
 		glm::mat4 model;
 		glm::vec4 lightDir = glm::vec4(10.0f, 10.0f, 10.0f, 1.0f);
-	} uboShared, uboSky;
+	} uboShared;
 
 	struct UBOTerrain {
 		glm::mat4 projection;
@@ -1367,7 +1366,7 @@ public:
 		descriptorSets.skysphere = new DescriptorSet(device);
 		descriptorSets.skysphere->setPool(descriptorPool);
 		descriptorSets.skysphere->addLayout(descriptorSetLayouts.skysphere);
-		descriptorSets.skysphere->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.sky.descriptor);
+		descriptorSets.skysphere->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsShared.descriptor);
 		descriptorSets.skysphere->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.skySphere.descriptor);
 		descriptorSets.skysphere->create();
 
@@ -1662,7 +1661,6 @@ public:
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsOffScreen, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsDebugQuad, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboTerrain)));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.sky, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &depthPass.uniformBuffer, sizeof(depthPass.ubo)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.CSM, sizeof(uboCSM)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.params, sizeof(UniformDataParams)));
@@ -1673,7 +1671,6 @@ public:
 		VK_CHECK_RESULT(uniformBuffers.vsOffScreen.map());
 		VK_CHECK_RESULT(uniformBuffers.vsDebugQuad.map());
 		VK_CHECK_RESULT(uniformBuffers.terrain.map());
-		VK_CHECK_RESULT(uniformBuffers.sky.map());
 		VK_CHECK_RESULT(depthPass.uniformBuffer.map());
 		VK_CHECK_RESULT(uniformBuffers.CSM.map());
 		VK_CHECK_RESULT(uniformBuffers.params.map());
@@ -1728,11 +1725,6 @@ public:
 
 		updateUniformBufferTerrain();
 		updateUniformBufferCSM();
-
-		// Sky
-		uboSky.projection = camera.matrices.perspective;
-		uboSky.model = glm::mat4(glm::mat3(camera.matrices.view));
-		uniformBuffers.sky.copyTo(&uboSky, sizeof(uboSky));
 	}
 
 	void updateUniformBufferTerrain() {
