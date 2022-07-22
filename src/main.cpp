@@ -386,7 +386,6 @@ public:
 		vks::Buffer vsShared;
 		vks::Buffer vsWater;
 		vks::Buffer vsOffScreen;
-		vks::Buffer vsDebugQuad;
 		vks::Buffer terrain;
 		vks::Buffer CSM;
 		vks::Buffer params;
@@ -597,7 +596,6 @@ public:
 		uniformBuffers.vsShared.destroy();
 		uniformBuffers.vsWater.destroy();
 		uniformBuffers.vsOffScreen.destroy();
-		uniformBuffers.vsDebugQuad.destroy();
 		uniformBuffers.params.destroy();
 	}
 
@@ -1659,7 +1657,6 @@ public:
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsShared, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsWater, sizeof(uboWaterPlane)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsOffScreen, sizeof(uboShared)));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsDebugQuad, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboTerrain)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &depthPass.uniformBuffer, sizeof(depthPass.ubo)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.CSM, sizeof(uboCSM)));
@@ -1669,7 +1666,6 @@ public:
 		VK_CHECK_RESULT(uniformBuffers.vsShared.map());
 		VK_CHECK_RESULT(uniformBuffers.vsWater.map());
 		VK_CHECK_RESULT(uniformBuffers.vsOffScreen.map());
-		VK_CHECK_RESULT(uniformBuffers.vsDebugQuad.map());
 		VK_CHECK_RESULT(uniformBuffers.terrain.map());
 		VK_CHECK_RESULT(depthPass.uniformBuffer.map());
 		VK_CHECK_RESULT(uniformBuffers.CSM.map());
@@ -1718,10 +1714,6 @@ public:
 		uboWaterPlane.time = sin(glm::radians(timer * 360.0f));
 		memcpy(uniformBuffers.vsWater.mapped, &uboWaterPlane, sizeof(uboWaterPlane));
 
-		// Debug quad
-		uboShared.projection = glm::ortho(4.0f, 0.0f, 0.0f, 4.0f*(float)height / (float)width, -1.0f, 1.0f);
-		uboShared.model = glm::mat4(1.0f);
-		memcpy(uniformBuffers.vsDebugQuad.mapped, &uboShared, sizeof(uboShared));
 
 		updateUniformBufferTerrain();
 		updateUniformBufferCSM();
