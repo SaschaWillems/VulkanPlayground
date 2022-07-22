@@ -126,8 +126,7 @@ public:
 
 		const int dim = 30; // 24 241
 		const int maxTreeCount = heightMapSettings.treeDensity * heightMapSettings.treeDensity;
-		std::random_device rndDevice;
-		std::default_random_engine prng(rndDevice());
+		std::default_random_engine prng(heightMapSettings.seed);
 		std::uniform_real_distribution<float> distribution(0, (float)(vks::HeightMap::chunkSize - 1));
 		std::uniform_real_distribution<float> scaleDist(heightMapSettings.minTreeSize, heightMapSettings.maxTreeSize);
 		std::uniform_real_distribution<float> rotDist(0.0, 1.0);
