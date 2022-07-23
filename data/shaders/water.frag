@@ -12,9 +12,8 @@ layout (binding = 0) uniform UBO
 {
 	mat4 projection;
 	mat4 model;
-	vec4 cameraPos;
 	vec4 lightDir;
-	vec4 color;
+	vec4 cameraPos;
 	float time;
 } ubo;
 
@@ -35,6 +34,7 @@ layout (set = 1, binding = 0) uniform UBOParams
 	uint shadows;
 	uint fog;
 	vec4 fogColor;
+	vec4 waterColor;
 } params;
 
 layout (location = 0) in vec2 inUV;
@@ -110,7 +110,7 @@ void main()
 
 	vec4 dudv = normal * distortAmount;
 
-	vec4 color = ubo.color;;
+	vec4 color = params.waterColor;
 	if (gl_FrontFacing) {
 		float shadow = 1.0;
 		if (params.shadows > 0) {

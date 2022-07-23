@@ -1,7 +1,6 @@
 #version 450
 
 layout(push_constant) uniform PushConsts {
-	vec4 position;
 	uint cascadeIndex;
 } pushConsts;
 

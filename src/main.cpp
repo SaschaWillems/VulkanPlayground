@@ -133,8 +133,6 @@ public:
 
 	struct {
 		vks::Buffer vsShared;
-		vks::Buffer vsWater;
-		vks::Buffer vsOffScreen;
 		vks::Buffer terrain;
 		vks::Buffer CSM;
 		vks::Buffer params;
@@ -144,6 +142,8 @@ public:
 		glm::mat4 projection;
 		glm::mat4 model;
 		glm::vec4 lightDir = glm::vec4(10.0f, 10.0f, 10.0f, 1.0f);
+		glm::vec4 cameraPos;
+		float time;
 	} uboShared;
 
 	struct UBOTerrain {
@@ -159,15 +159,6 @@ public:
 		glm::mat4 inverseViewMat;
 		glm::vec3 lightDir;
 	} uboCSM;
-
-	struct UBOWaterPlane {
-		glm::mat4 projection;
-		glm::mat4 model;
-		glm::vec4 cameraPos;
-		glm::vec4 lightDir;
-		glm::vec4 color = glm::vec4(1.0f);
-		float time;
-	} uboWaterPlane;
 
 	struct UniformDataParams {
 		uint32_t shadows = 0;
@@ -227,10 +218,6 @@ public:
 	float zFar = 1024.0f;
 
 	// Resources of the depth map generation pass
-	struct CascadePushConstBlock {
-		glm::vec4 position;
-		uint32_t cascadeIndex;
-	};
 	struct DepthPass {
 		RenderPass* renderPass;
 		PipelineLayout* pipelineLayout;
@@ -337,8 +324,6 @@ public:
 	{
 		vkDestroySampler(device, offscreenPass.sampler, nullptr);
 		uniformBuffers.vsShared.destroy();
-		uniformBuffers.vsWater.destroy();
-		uniformBuffers.vsOffScreen.destroy();
 		uniformBuffers.params.destroy();
 	}
 
@@ -600,11 +585,13 @@ public:
 	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
 		vks::Frustum cascadeFrustum;
 		cascadeFrustum.update(cascades[cascadeIndex].viewProjMatrix);
+	void drawShadowCasters(CommandBuffer* cb) {
+		//vks::Frustum cascadeFrustum;
+		//cascadeFrustum.update(cascades[cascadeIndex].viewProjMatrix);
 
-		CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeIndex };
+		glm::vec4 pushConstPos = glm::vec4(0.0f);
 		cb->bindPipeline(pipelines.depthpass);
 		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
-		//vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
 
 		// Terrain
 		// @todo: limit distance
@@ -612,8 +599,8 @@ public:
 			//if (terrainChunk->visible && terrainChunk->hasValidMesh) {
 			bool chunkVisible = terrainChunk->hasValidMesh && terrainChunk->visible;
 			if (chunkVisible) {
-				pushConst.position = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
-				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
+				pushConstPos = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
+				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConstPos);
 				terrainChunk->draw(cb);
 			}
 		}
@@ -626,8 +613,8 @@ public:
 			if (chunkVisible) {
 				VkDeviceSize offsets[1] = { 0 };
 				vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
-				pushConst.position = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
-				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConst);
+				pushConstPos = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
+				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConstPos);
 				models.trees[heightMapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, depthPass.pipelineLayout->handle, 1, terrainChunk->treeInstanceCount);
 			}
 		}
@@ -882,24 +869,12 @@ public:
 	}
 
 	void drawCSM(CommandBuffer *cb) {
-		/*
-			Generate depth map cascades
-
-			Uses multiple passes with each pass rendering the scene to the cascade's depth image layer
-			Could be optimized using a geometry shader (and layered frame buffer) on devices that support geometry shaders
-		*/
+		// Generate depth map cascades
+		// All cascades are rendered in one pass using a layered depth image and multiview
 		cb->setViewport(0, 0, (float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
 		cb->setScissor(0, 0, SHADOWMAP_DIM, SHADOWMAP_DIM);
-		// One pass per cascade
-		//// The layer that this pass renders to is defined by the cascade's image view (selected via the cascade's decsriptor set)
-		//for (uint32_t j = 0; j < SHADOW_MAP_CASCADE_COUNT; j++) {
-		//	cb->beginRenderPass(depthPass.renderPass, cascades[j].frameBuffer);
-		//	drawShadowCasters(cb, j);
-		//	cb->endRenderPass();
-		//}
-
 		cb->beginRenderPass(depthPass.renderPass, cascadesFramebuffer);
-		drawShadowCasters(cb, 0);
+		drawShadowCasters(cb);
 		cb->endRenderPass();
 	}
 
@@ -1053,7 +1028,7 @@ public:
 		depthPass.pipelineLayout = new PipelineLayout(device);
 		depthPass.pipelineLayout->addLayout(depthPass.descriptorSetLayout);
 		depthPass.pipelineLayout->addLayout(vkglTF::descriptorSetLayoutImage);
-		depthPass.pipelineLayout->addPushConstantRange(sizeof(CascadePushConstBlock), 0, VK_SHADER_STAGE_VERTEX_BIT);
+		depthPass.pipelineLayout->addPushConstantRange(sizeof(glm::vec4), 0, VK_SHADER_STAGE_VERTEX_BIT);
 		depthPass.pipelineLayout->create();
 
 		// Cascade debug
@@ -1063,7 +1038,7 @@ public:
 
 		cascadeDebug.pipelineLayout = new PipelineLayout(device);
 		cascadeDebug.pipelineLayout->addLayout(cascadeDebug.descriptorSetLayout);
-		cascadeDebug.pipelineLayout->addPushConstantRange(sizeof(glm::vec4) + sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT);
+		cascadeDebug.pipelineLayout->addPushConstantRange(sizeof(uint32_t), 0, VK_SHADER_STAGE_VERTEX_BIT);
 		cascadeDebug.pipelineLayout->create();
 
 	}
@@ -1076,7 +1051,7 @@ public:
 		descriptorSets.waterplane = new DescriptorSet(device);
 		descriptorSets.waterplane->setPool(descriptorPool);
 		descriptorSets.waterplane->addLayout(descriptorSetLayouts.textured);
-		descriptorSets.waterplane->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsWater.descriptor);
+		descriptorSets.waterplane->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsShared.descriptor);
 		descriptorSets.waterplane->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.refraction.descriptor);
 		descriptorSets.waterplane->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &offscreenPass.reflection.descriptor);
 		descriptorSets.waterplane->addDescriptor(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.waterNormalMap.descriptor);
@@ -1386,8 +1361,6 @@ public:
 	void prepareUniformBuffers()
 	{		
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsShared, sizeof(uboShared)));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsWater, sizeof(uboWaterPlane)));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsOffScreen, sizeof(uboShared)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboTerrain)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &depthPass.uniformBuffer, sizeof(depthPass.ubo)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.CSM, sizeof(uboCSM)));
@@ -1395,15 +1368,12 @@ public:
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.vsShared.map());
-		VK_CHECK_RESULT(uniformBuffers.vsWater.map());
-		VK_CHECK_RESULT(uniformBuffers.vsOffScreen.map());
 		VK_CHECK_RESULT(uniformBuffers.terrain.map());
 		VK_CHECK_RESULT(depthPass.uniformBuffer.map());
 		VK_CHECK_RESULT(uniformBuffers.CSM.map());
 		VK_CHECK_RESULT(uniformBuffers.params.map());
 
 		updateUniformBuffers();
-		updateUniformBufferOffscreen();
 		updateUniformParams();
 	}
 
@@ -1411,6 +1381,7 @@ public:
 	{
 		uniformDataParams.shadows = renderShadows;
 		uniformDataParams.fogColor = glm::vec4(heightMapSettings.fogColor[0], heightMapSettings.fogColor[1], heightMapSettings.fogColor[2], 1.0f);
+		uniformDataParams.waterColor = glm::vec4(heightMapSettings.waterColor[0], heightMapSettings.waterColor[1], heightMapSettings.waterColor[2], 1.0f);
 		memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
 	}
 
@@ -1428,23 +1399,14 @@ public:
 		//lightPos = glm::vec4(cos(angle) * radius, -15.0f, sin(angle) * radius, 0.0f);
 
 		uboTerrain.lightDir = glm::normalize(-lightPos);
-		uboWaterPlane.lightDir = glm::normalize(-lightPos);
 		uboShared.lightDir = glm::normalize(-lightPos);
-
 		uboShared.projection = camera.matrices.perspective;
-		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
+		uboShared.model = camera.matrices.view;
+		uboShared.time = sin(glm::radians(timer * 360.0f));
+		uboShared.cameraPos = glm::vec4(camera.position, 0.0f);
 
 		// Mesh
 		memcpy(uniformBuffers.vsShared.mapped, &uboShared, sizeof(uboShared));
-
-		// Mirror
-		uboWaterPlane.projection = camera.matrices.perspective;
-		uboWaterPlane.model = camera.matrices.view * glm::mat4(1.0f);
-		//uboWaterPlane.model = glm::translate(uboWaterPlane.model, glm::vec3(0.0f, 0.25f, 0.0f));
-		uboWaterPlane.cameraPos = glm::vec4(camera.position, 0.0f);
-		uboWaterPlane.time = sin(glm::radians(timer * 360.0f));
-		memcpy(uniformBuffers.vsWater.mapped, &uboWaterPlane, sizeof(uboWaterPlane));
-
 
 		updateUniformBufferTerrain();
 		updateUniformBufferCSM();
@@ -1469,14 +1431,6 @@ public:
 		uboCSM.inverseViewMat = glm::inverse(camera.matrices.view);
 		uboCSM.lightDir = normalize(-lightPos);
 		memcpy(uniformBuffers.CSM.mapped, &uboCSM, sizeof(uboCSM));
-	}
-
-	void updateUniformBufferOffscreen()
-	{
-		uboShared.projection = camera.matrices.perspective;
-		uboShared.model = camera.matrices.view * glm::mat4(1.0f);
-		uboShared.model = glm::scale(uboShared.model, glm::vec3(1.0f, -1.0f, 1.0f));
-		memcpy(uniformBuffers.vsOffScreen.mapped, &uboShared, sizeof(uboShared));
 	}
 
 	void prepare()
@@ -1507,7 +1461,7 @@ public:
 		
 		// @todo
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		infiniteTerrain.updateVisibleChunks(camera);
+		infiniteTerrain.updateVisibleChunks(frustum);
 		
 		prepared = true;
 	}
@@ -1564,10 +1518,9 @@ public:
 			}
 
 			if (cascadeDebug.enabled) {
-				const CascadePushConstBlock pushConst = { glm::vec4(0.0f), cascadeDebug.cascadeIndex };
 				cb->bindDescriptorSets(cascadeDebug.pipelineLayout, { cascadeDebug.descriptorSet }, 0);
 				cb->bindPipeline(cascadeDebug.pipeline);
-				cb->updatePushConstant(cascadeDebug.pipelineLayout, 0, &pushConst);
+				cb->updatePushConstant(cascadeDebug.pipelineLayout, 0, &cascadeDebug.cascadeIndex);
 				cb->draw(6, 1, 0, 0);
 			}
 
@@ -1617,7 +1570,6 @@ public:
 		{
 			updateCascades();
 			updateUniformBuffers();
-			updateUniformBufferOffscreen();
 		}
 		updateMemoryBudgets();
 	}
@@ -1625,7 +1577,6 @@ public:
 	virtual void viewChanged()
 	{
 		updateUniformBuffers();
-		updateUniformBufferOffscreen();
 		// @todo
 		if (!fixFrustum) {
 			frustum.update(camera.matrices.perspective * camera.matrices.view);
@@ -1636,25 +1587,7 @@ public:
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
-		bool updateTerrain = false;
-
-		/*ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
-		ImGui::SetNextWindowPos(ImVec2(10, 10));
-		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
-		ImGui::Begin("Vulkan Example", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-		ImGui::TextUnformatted(title.c_str());
-		ImGui::TextUnformatted(deviceProperties.deviceName);
-		ImGui::Text("%.2f ms/frame (%.1d fps)", (1000.0f / lastFPS), lastFPS);
-
-	#if defined(VK_USE_PLATFORM_ANDROID_KHR)
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 5.0f * UIOverlay.scale));
-	#endif
-		ImGui::PushItemWidth(110.0f * UIOverlay.scale);
-		OnUpdateUIOverlay(&UIOverlay);
-		ImGui::PopItemWidth();
-	#if defined(VK_USE_PLATFORM_ANDROID_KHR)
-		ImGui::PopStyleVar();
-	#endif*/
+		bool updateParamsReq = false;
 
 		ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
@@ -1694,6 +1627,7 @@ public:
 		ImGui::Begin("Terrain", nullptr, ImGuiWindowFlags_None);
 		overlay->text("%d chunks in memory", infiniteTerrain.terrainChunks.size());
 		overlay->text("%d chunks visible", infiniteTerrain.getVisibleChunkCount());
+		overlay->text("%d trees visible", infiniteTerrain.getVisibleTreeCount());
 		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightMapSettings.mapChunkSize - 1));
 		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightMapSettings.mapChunkSize - 1));
 		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
@@ -1701,14 +1635,14 @@ public:
 		overlay->text("cam yaw = %.2f / pitch =%.2f", camera.yaw, camera.pitch);
 		ImGui::End();
 
-		bool updateParamsReq = false;
 		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Render options", nullptr, ImGuiWindowFlags_None);
 		updateParamsReq |= overlay->checkBox("Fog", &uniformDataParams.fog);
 		updateParamsReq |= overlay->checkBox("Shadows", &renderShadows);
-		if (updateParamsReq) {
-			updateUniformParams();
+		overlay->checkBox("Trees", &renderTrees);
+		if (overlay->sliderFloat("Chunk draw distance", &heightMapSettings.maxChunkDrawDistance, 0.0f, 1024.0f)) {
+			infiniteTerrain.updateViewDistance(heightMapSettings.maxChunkDrawDistance);
 		}
 		ImGui::End();
 
@@ -1734,18 +1668,8 @@ public:
 		overlay->sliderFloat("Persistence", &heightMapSettings.persistence, 0.0f, 10.0f);
 		overlay->sliderFloat("Lacunarity", &heightMapSettings.lacunarity, 0.0f, 10.0f);
 		
-		if (ImGui::ColorEdit4("Water color", heightMapSettings.waterColor)) {
-			uboWaterPlane.color.r = heightMapSettings.waterColor[0];
-			uboWaterPlane.color.g = heightMapSettings.waterColor[1];
-			uboWaterPlane.color.b = heightMapSettings.waterColor[2];
-		}
-
-		if (ImGui::ColorEdit4("Fog color", heightMapSettings.fogColor)) {
-			uniformDataParams.fogColor.r = heightMapSettings.fogColor[0];
-			uniformDataParams.fogColor.g = heightMapSettings.fogColor[1];
-			uniformDataParams.fogColor.b = heightMapSettings.fogColor[2];
-			updateUniformParams();
-		}
+		updateParamsReq |= ImGui::ColorEdit4("Water color", heightMapSettings.waterColor);
+		updateParamsReq |= ImGui::ColorEdit4("Fog color", heightMapSettings.fogColor);
 
 		overlay->comboBox("Tree type", &heightMapSettings.treeModelIndex, treeModels);
 		overlay->sliderInt("Tree density", &heightMapSettings.treeDensity, 1, 64);
@@ -1763,11 +1687,15 @@ public:
 			updateHeightmap(false);
 			viewChanged();
 			updateUniformParams();
-			uboWaterPlane.color.r = heightMapSettings.waterColor[0];
-			uboWaterPlane.color.g = heightMapSettings.waterColor[1];
-			uboWaterPlane.color.b = heightMapSettings.waterColor[2];
+			uniformDataParams.waterColor.r = heightMapSettings.waterColor[0];
+			uniformDataParams.waterColor.g = heightMapSettings.waterColor[1];
+			uniformDataParams.waterColor.b = heightMapSettings.waterColor[2];
 		}
 		ImGui::End();
+
+		if (updateParamsReq) {
+			updateUniformParams();
+		}
 	}
 
 	virtual void mouseMoved(double x, double y, bool& handled)

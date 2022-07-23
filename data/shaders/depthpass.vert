@@ -10,7 +10,6 @@ layout (location = 2) in vec2 inUV;
 
 layout(push_constant) uniform PushConsts {
 	vec4 position;
-	uint cascadeIndex;
 } pushConsts;
 
 layout (binding = 0) uniform UBO {

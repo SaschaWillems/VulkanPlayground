@@ -13,8 +13,8 @@ layout (binding = 0) uniform UBO
 {
 	mat4 projection;
 	mat4 model;
-	vec4 cameraPos;
 	vec4 lightDir;
+	vec4 cameraPos;
 	float time;
 } ubo;
 
