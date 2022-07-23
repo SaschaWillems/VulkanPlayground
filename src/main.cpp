@@ -175,7 +175,7 @@ public:
 	struct DescriptorSets {
 		DescriptorSet* waterplane;
 		DescriptorSet* debugquad;
-		DescriptorSet* terrain;
+		DescriptorSet* terrain = nullptr;
 		DescriptorSet* skysphere;
 		DescriptorSet* sceneMatrices;
 		DescriptorSet* sceneParams;
@@ -867,6 +867,19 @@ public:
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/" + filename, VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		descriptorSets.skysphere->updateDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.skySphere.descriptor);
 	}
+	
+	void loadTerrainSet(const std::string name)
+	{
+		const std::string path = getAssetPath() + "textures/terrainsets/" + name + "/";
+		std::vector<std::string> filenames;
+		for (int i = 0; i < 6; i++) {
+			filenames.push_back(path + std::to_string(i) + ".ktx");
+		}
+		textures.terrainArray.loadFromFiles(filenames, VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		if (descriptorSets.terrain) {
+			descriptorSets.terrain->updateDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
+		}
+	}
 
 	void loadAssets()
 	{
@@ -874,12 +887,11 @@ public:
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
 		models.trees.resize(treeModels.size());
 		for (size_t i = 0; i < treeModels.size(); i++) {
-			models.trees[i].loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[i], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY);
+			models.trees[i].loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[i], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
 		}
-
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere2.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
-		textures.terrainArray.loadFromFile(getAssetPath() + "textures/terrain_layers_01_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		loadTerrainSet("default");
 
 		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
 
@@ -1049,11 +1061,10 @@ public:
 		descriptorSets.terrain = new DescriptorSet(device);
 		descriptorSets.terrain->setPool(descriptorPool);
 		descriptorSets.terrain->addLayout(descriptorSetLayouts.terrain);
-		descriptorSets.terrain->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.terrain.descriptor);
+		descriptorSets.terrain->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.vsShared.descriptor);
 		descriptorSets.terrain->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
-		descriptorSets.terrain->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
-		descriptorSets.terrain->addDescriptor(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
-		descriptorSets.terrain->addDescriptor(4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
+		descriptorSets.terrain->addDescriptor(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
+		descriptorSets.terrain->addDescriptor(3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
 		descriptorSets.terrain->create();
 
 		// Skysphere
@@ -1384,12 +1395,6 @@ public:
 		memcpy(uniformBuffers.vsShared.mapped, &uboShared, sizeof(uboShared));
 
 		updateUniformBufferCSM();
-	}
-
-	void updateUniformBufferTerrain() {
-		uboTerrain.projection = camera.matrices.perspective;
-		uboTerrain.model = camera.matrices.view;
-		uniformBuffers.terrain.copyTo(&uboTerrain, sizeof(uboTerrain));
 	}
 
 	void updateUniformBufferCSM() {
