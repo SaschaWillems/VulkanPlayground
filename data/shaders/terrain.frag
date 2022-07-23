@@ -17,7 +17,6 @@ layout (set = 0, binding = 0) uniform UBO
 	mat4 projection;
 	mat4 modelview;
 	vec4 lightDir;
-	vec4 layers[6];
 } ubo;
 
 layout (set = 0, binding = 4) uniform UBOCSM {
@@ -32,12 +31,15 @@ layout (set = 1, binding = 0) uniform UBOParams
 	uint shadows;
 	uint fog;
 	vec4 fogColor;
+	vec4 waterColor;
+	vec4 layers[6];
 } params;
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
 	vec4 clipPlane;
 	uint shadows;
+	float alpha;
 } pushConsts;
 
 layout (location = 0) in vec3 inNormal;
@@ -107,9 +109,9 @@ vec3 sampleTerrainLayer()
 	vec3 color = vec3(0.0);
 	float texRepeat = 0.125f;
 	vec3 blend = triPlanarBlend(inNormal);
-	for (int i = 0; i < ubo.layers.length(); i++) {
-		float start = ubo.layers[i].x - ubo.layers[i].y / 2.0;
-		float end = ubo.layers[i].x + ubo.layers[i].y / 2.0;
+	for (int i = 0; i < params.layers.length(); i++) {
+		float start = params.layers[i].x - params.layers[i].y / 2.0;
+		float end = params.layers[i].x + params.layers[i].y / 2.0;
 		float range = end - start;
 		float weight = (range - abs(inTerrainHeight - end)) / range;
 		weight = max(0.0, weight);
@@ -128,11 +130,10 @@ vec3 sampleTerrainLayer()
 
 void main()
 {
-
 	// Shadows
 	float shadow = 0.0f;
 	bool enablePCF = false;
-	if (params.shadows > 0) {
+	if (pushConsts.shadows > 0) {
 		// Get cascade index for the current fragment's view position
 		uint cascadeIndex = 0;
 		for(uint i = 0; i < SHADOW_MAP_CASCADE_COUNT - 1; ++i) {
@@ -160,5 +161,7 @@ void main()
 	} else {
 		outFragColor = vec4(color, 1.0);
 	}
+
+	outFragColor.a = clamp(pushConsts.alpha, 0.0, 1.0);
 
 }

@@ -133,7 +133,6 @@ public:
 
 	struct {
 		vks::Buffer vsShared;
-		vks::Buffer terrain;
 		vks::Buffer CSM;
 		vks::Buffer params;
 	} uniformBuffers;
@@ -145,13 +144,6 @@ public:
 		glm::vec4 cameraPos;
 		float time;
 	} uboShared;
-
-	struct UBOTerrain {
-		glm::mat4 projection;
-		glm::mat4 model;
-		glm::vec4 lightDir = glm::vec4(10.0f, 10.0f, 10.0f, 1.0f);
-		glm::vec4 layers[TERRAIN_LAYER_COUNT];
-	} uboTerrain;
 
 	struct UBOCSM {
 		float cascadeSplits[SHADOW_MAP_CASCADE_COUNT];
@@ -166,6 +158,8 @@ public:
 		uint32_t _pad0;
 		uint32_t _pad1;
 		glm::vec4 fogColor;
+		glm::vec4 waterColor;
+		glm::vec4 layers[TERRAIN_LAYER_COUNT];
 	} uniformDataParams;
 
 	struct {
@@ -280,15 +274,7 @@ public:
 		settings.overlay = true;
 		timerSpeed *= 0.05f;
 
-		//camera.setPosition(glm::vec3(1021.0f, -32.0f, 526.0f));
-		//camera.rotate(133.75f, 6.25f);
-
-		// Frustumc ulld ebug
-		//camera.setPosition(glm::vec3(83.86f, -17.9753284f, 90.0f));
-//		camera.rotate(-318.62f, 5.0f);
-
 		camera.setPosition(glm::vec3(0.0f, -25.0f, 0.0f));
-
 
 		camera.update(0.0f);
 		frustum.update(camera.matrices.perspective * camera.matrices.view);
@@ -300,11 +286,6 @@ public:
 		enabledFeatures.fillModeNonSolid = VK_TRUE;
 		enabledFeatures11.multiview = VK_TRUE;
 
-		// @todo
-		float radius = 20.0f;
-		lightPos = glm::vec4(-20.0f, -15.0f, -15.0f, 0.0f) * radius;
-		uboTerrain.lightDir = glm::normalize(lightPos);
-
 		// Spawn background thread that creates newly visible terrain chunkgs
 		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
 		backgroundLoadingThread.detach();
@@ -313,7 +294,7 @@ public:
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
 		heightMapSettings.loadFromFile(getAssetPath() + "presets/default.txt");
-		memcpy(uboTerrain.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
+		memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 
 #if defined(_WIN32)
 		//ShowCursor(false);
@@ -582,9 +563,6 @@ public:
 		}
 	}
 
-	void drawShadowCasters(CommandBuffer* cb, uint32_t cascadeIndex = 0) {
-		vks::Frustum cascadeFrustum;
-		cascadeFrustum.update(cascades[cascadeIndex].viewProjMatrix);
 	void drawShadowCasters(CommandBuffer* cb) {
 		//vks::Frustum cascadeFrustum;
 		//cascadeFrustum.update(cascades[cascadeIndex].viewProjMatrix);
@@ -1361,14 +1339,12 @@ public:
 	void prepareUniformBuffers()
 	{		
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.vsShared, sizeof(uboShared)));
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.terrain, sizeof(uboTerrain)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &depthPass.uniformBuffer, sizeof(depthPass.ubo)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.CSM, sizeof(uboCSM)));
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uniformBuffers.params, sizeof(UniformDataParams)));
 
 		// Map persistent
 		VK_CHECK_RESULT(uniformBuffers.vsShared.map());
-		VK_CHECK_RESULT(uniformBuffers.terrain.map());
 		VK_CHECK_RESULT(depthPass.uniformBuffer.map());
 		VK_CHECK_RESULT(uniformBuffers.CSM.map());
 		VK_CHECK_RESULT(uniformBuffers.params.map());
@@ -1398,7 +1374,6 @@ public:
 		//float angle = glm::radians(timer * 360.0f);
 		//lightPos = glm::vec4(cos(angle) * radius, -15.0f, sin(angle) * radius, 0.0f);
 
-		uboTerrain.lightDir = glm::normalize(-lightPos);
 		uboShared.lightDir = glm::normalize(-lightPos);
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view;
@@ -1408,7 +1383,6 @@ public:
 		// Mesh
 		memcpy(uniformBuffers.vsShared.mapped, &uboShared, sizeof(uboShared));
 
-		updateUniformBufferTerrain();
 		updateUniformBufferCSM();
 	}
 
@@ -1650,14 +1624,9 @@ public:
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Terrain layers", nullptr, ImGuiWindowFlags_None);
 		for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-			overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uboTerrain.layers[i].x, uboTerrain.layers[i].y, 0.0f, 1.0f);
+			updateParamsReq |= overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uniformDataParams.layers[i].x, uniformDataParams.layers[i].y, 0.0f, 1.0f);
 		}
 		ImGui::End();
-
-		if (updateParamsReq) {
-			vkQueueWaitIdle(queue);
-			memcpy(uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
-		}
 
 		ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
@@ -1682,7 +1651,7 @@ public:
 		if (overlay->comboBox("Load preset", &presetIndex, presets)) {
 			heightMapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
 			loadSkySphere(heightMapSettings.skySphere);
-			memcpy(uboTerrain.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
+			memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 			infiniteTerrain.clear();
 			updateHeightmap(false);
 			viewChanged();
@@ -1694,6 +1663,7 @@ public:
 		ImGui::End();
 
 		if (updateParamsReq) {
+			vkQueueWaitIdle(queue);
 			updateUniformParams();
 		}
 	}
