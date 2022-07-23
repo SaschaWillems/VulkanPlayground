@@ -35,6 +35,7 @@
 #include "Image.hpp"
 #include "ImageView.hpp"
 #include "frustum.hpp"
+#include "TerrainChunk.h"
 #include "HeightMapSettings.h"
 
 #define ENABLE_VALIDATION false
@@ -48,151 +49,6 @@ VkQueue transferQueue;
 vks::Frustum frustum;
 const float chunkDim = 241.0f;
 float waterPosition = 1.75f;
-
-HeightMapSettings heightMapSettings;
-
-struct InstanceData {
-	glm::vec3 pos;
-	glm::vec3 scale;
-	glm::vec3 rotation;
-};
-
-class TerrainChunk {
-public:
-	vks::HeightMap* heightMap = nullptr;
-	vks::Buffer instanceBuffer;
-	glm::ivec2 position;
-	glm::vec3 center;
-	glm::vec3 min;
-	glm::vec3 max;
-	int size;
-	bool hasValidMesh = false;
-	bool visible = false;
-	int treeInstanceCount;
-	
-	TerrainChunk(glm::ivec2 coords, int size) : size(size) {
-		position = coords;
-		center = glm::vec3(0.0f);
-		center.x = (float)coords.x * (float)size;
-		center.z = (float)coords.y * (float)size;
-		min = glm::vec3(center) - glm::vec3((float)size / 2.0f);
-		max = glm::vec3(center) + glm::vec3((float)size / 2.0f);
-		heightMap = new vks::HeightMap(defaultDevice, transferQueue);
-	};
-
-	void update() {
-
-	}
-
-	void updateHeightMap() {
-		assert(heightMap);
-		if (heightMap->vertexBuffer.buffer != VK_NULL_HANDLE) {
-			heightMap->vertexBuffer.destroy();
-			heightMap->indexBuffer.destroy();
-		}
-		heightMap->generate(
-			heightMapSettings.seed,
-			heightMapSettings.noiseScale,
-			heightMapSettings.octaves,
-			heightMapSettings.persistence,
-			heightMapSettings.lacunarity,
-			// @todo: base on offset instead of changing it
-			heightMapSettings.offset);
-		glm::vec3 scale = glm::vec3(1.0f, -heightMapSettings.heightScale, 1.0f); // @todo
-		heightMap->generateMesh(
-			scale,
-			vks::HeightMap::topologyTriangles,
-			heightMapSettings.levelOfDetail
-		);
-	}
-
-	float getHeight(int x, int y) {
-		assert(heightMap);
-		return heightMap->getHeight(x, y);
-	}
-
-	void updateTrees() {
-		assert(heightMap);
-		if (instanceBuffer.buffer != VK_NULL_HANDLE) {
-			instanceBuffer.destroy();
-		}
-
-		float topLeftX = (float)(vks::HeightMap::chunkSize - 1) / -2.0f;
-		float topLeftZ = (float)(vks::HeightMap::chunkSize - 1) / 2.0f;
-
-		std::vector<InstanceData> instanceData;
-
-		// Random distribution
-
-		const int dim = 30; // 24 241
-		const int maxTreeCount = heightMapSettings.treeDensity * heightMapSettings.treeDensity;
-		std::default_random_engine prng(heightMapSettings.seed);
-		std::uniform_real_distribution<float> distribution(0, (float)(vks::HeightMap::chunkSize - 1));
-		std::uniform_real_distribution<float> scaleDist(heightMapSettings.minTreeSize, heightMapSettings.maxTreeSize);
-		std::uniform_real_distribution<float> rotDist(0.0, 1.0);
-
-		for (int i = 0; i < maxTreeCount; i++) {
-			float xPos = distribution(prng);
-			float yPos = distribution(prng);
-			int terrainX = round(xPos + 0.5f);
-			int terrainY = round(yPos + 0.5f);
-			float h1 = getHeight(terrainX - 1, terrainY);
-			float h2 = getHeight(terrainX + 1, terrainY);
-			float h3 = getHeight(terrainX, terrainY - 1);
-			float h4 = getHeight(terrainX, terrainY + 1);
-			float h = (h1 + h2 + h3 + h4) / 4.0f;
-			if ((h <= waterPosition) || (h > 15.0f)) {
-				continue;
-			}
-			InstanceData inst{};
-			inst.pos = glm::vec3((float)topLeftX + xPos, -h, (float)topLeftZ - yPos);
-			inst.scale = glm::vec3(scaleDist(prng));
-			inst.rotation = glm::vec3(M_PI * rotDist(prng) * 0.035f, M_PI * rotDist(prng), M_PI * rotDist(prng) * 0.035f);
-			instanceData.push_back(inst);
-		}
-		// Even distribution
-		/*
-
-		std::vector<InstanceData> instanceData;
-		const int dim = 24; // 241
-		const int maxTreeCount = dim * dim; // @todo
-		std::uniform_real_distribution<float> uniformDist(0.0f, 1.0f);
-		for (int x = 0; x < dim; x++) {
-			for (int y = 0; y < dim; y++) {
-				const float f = 10.1f;
-				float xPos = (float)x * f + 5.0f;
-				float yPos = (float)y * f + 5.0f;
-				int terrainX = round(xPos + 0.5f);
-				int terrainY = round(yPos + 0.5f);
-				float h1 = getHeight(terrainX - 1, terrainY);
-				float h2 = getHeight(terrainX + 1, terrainY);
-				float h3 = getHeight(terrainX, terrainY - 1);
-				float h4 = getHeight(terrainX, terrainY + 1);
-				float h = (h1 + h2 + h3 + h4) / 4.0f;
-				if ((h <= waterPosition) || (h > 15.0f)) {
-					continue;
-				}
-				InstanceData inst{};
-				inst.pos = glm::vec3((float)topLeftX + xPos, -h, (float)topLeftZ - yPos);
-				instanceData.push_back(inst);
-			}
-		}
-		*/
-
-		treeInstanceCount = static_cast<uint32_t>(instanceData.size());
-		vks::Buffer stagingBuffer;
-		VK_CHECK_RESULT(defaultDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
-		VK_CHECK_RESULT(defaultDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &instanceBuffer, stagingBuffer.size));
-		defaultDevice->copyBuffer(&stagingBuffer, &instanceBuffer, transferQueue);
-		stagingBuffer.destroy();
-	}
-
-	void draw(CommandBuffer* cb) {
-		if (hasValidMesh) {
-			heightMap->draw(cb->handle);
-		}
-	}
-};
 
 class InfiniteTerrain {
 public:
@@ -276,7 +132,7 @@ public:
 			heightMapSettings.offset.x = (float)terrainChunk->position.x * (float)(chunkSize);
 			heightMapSettings.offset.y = (float)terrainChunk->position.y * (float)(chunkSize);
 			terrainChunk->updateHeightMap();
-			terrainChunk->updateTrees();
+			terrainChunk->updateTrees(waterPosition);
 			terrainChunk->hasValidMesh = true;
 			heightMapSettings.levelOfDetail = l;
 		}
@@ -505,14 +361,8 @@ public:
 
 	// Contains all resources required for a single shadow map cascade
 	struct Cascade {
-		VkFramebuffer frameBuffer;
-		DescriptorSet* descriptorSet;
-		ImageView* view;
 		float splitDepth;
 		glm::mat4 viewProjMatrix;
-		void destroy(VkDevice device) {
-			vkDestroyFramebuffer(device, frameBuffer, nullptr);
-		}
 	};
 	std::array<Cascade, SHADOW_MAP_CASCADE_COUNT> cascades;
 	VkImageView cascadesView;
@@ -529,7 +379,7 @@ public:
 					heightMapSettings.offset.x = (float)chunk->position.x * (float)(chunk->size);
 					heightMapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
 					chunk->updateHeightMap();
-					chunk->updateTrees();
+					chunk->updateTrees(waterPosition);
 					chunk->min.y = chunk->heightMap->minHeight;
 					chunk->max.y = chunk->heightMap->maxHeight;
 					chunk->hasValidMesh = true;
@@ -1381,18 +1231,6 @@ public:
 		descriptorSets.sceneParams->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.params.descriptor);
 		descriptorSets.sceneParams->create();
 
-		// Shadow map cascades (one set per cascade)
-		// @todo: Doesn't make sense, all refer to same depth
-		for (auto i = 0; i < cascades.size(); i++) {
-			VkDescriptorImageInfo cascadeImageInfo = vks::initializers::descriptorImageInfo(depth.sampler, depth.view->handle, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
-			cascades[i].descriptorSet = new DescriptorSet(device);
-			cascades[i].descriptorSet->setPool(descriptorPool);
-			cascades[i].descriptorSet->addLayout(descriptorSetLayouts.textured);
-			cascades[i].descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &depthPass.uniformBuffer.descriptor);
-			cascades[i].descriptorSet->addDescriptor(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &cascadeImageInfo);
-			cascades[i].descriptorSet->create();
-		}
-
 		// Depth pass
 		depthPass.descriptorSet = new DescriptorSet(device);
 		depthPass.descriptorSet->setPool(descriptorPool);
@@ -1762,6 +1600,9 @@ public:
 		} else {
 			transferQueue = queue;
 		}
+
+		VulkanContext::copyQueue = transferQueue;
+		VulkanContext::device = vulkanDevice;
 
 		hasExtMemoryBudget = vulkanDevice->extensionSupported("VK_EXT_memory_budget");
 

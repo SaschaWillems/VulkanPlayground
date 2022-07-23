@@ -40,3 +40,5 @@ public:
 
 	void loadFromFile(const std::string filename);
 };
+
+extern HeightMapSettings heightMapSettings;

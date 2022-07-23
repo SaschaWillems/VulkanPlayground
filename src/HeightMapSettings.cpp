@@ -8,6 +8,8 @@
 
 #include "HeightMapSettings.h"
 
+HeightMapSettings heightMapSettings{};
+
 void HeightMapSettings::loadFromFile(const std::string filename)
 {
 	std::ifstream file;

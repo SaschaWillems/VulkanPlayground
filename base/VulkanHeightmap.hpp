@@ -6,6 +6,8 @@
 * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 */
 
+#pragma once
+
 #include <glm/glm.hpp>
 
 #include "vulkan/vulkan.h"
@@ -39,6 +41,9 @@ namespace vks
 		// Height data also contains info on neighbouring borders to properly calculate normals
 		float heights[chunkSize + 2][chunkSize + 2];
 		enum Topology { topologyTriangles, topologyQuads };
+
+		float minHeight = std::numeric_limits<float>::max();
+		float maxHeight = std::numeric_limits<float>::min();
 
 		float heightScale = 4.0f;
 		float uvScale = 1.0f;
@@ -147,7 +152,7 @@ namespace vks
 
 					float noiseHeight = 0;
 
-					for (uint32_t i = 0; i < octaves; i++) {
+					for (int i = 0; i < octaves; i++) {
 						float sampleX = ((float)x - halfWidth + octaveOffsets[i].x) / noiseScale * frequency;
 						float sampleY = ((float)y - halfHeight + octaveOffsets[i].y) / noiseScale * frequency;
 
@@ -237,9 +242,16 @@ namespace vks
 					vertices[vertexIndex].pos.y = currentHeight;
 					vertices[vertexIndex].pos.z = topLeftZ - (float)y;
 					vertices[vertexIndex].pos *= scale;
-					//vertices[vertexIndex].pos.y += 1.75f; // @todo
 					vertices[vertexIndex].uv = glm::vec2((float)x / (float)meshDim, (float)y / (float)meshDim);
 					vertices[vertexIndex].terrainHeight = currentHeight;
+
+					if (abs(vertices[vertexIndex].pos.y) > maxHeight) {
+						maxHeight = abs(vertices[vertexIndex].pos.y);
+					}
+
+					if (abs(vertices[vertexIndex].pos.y) < minHeight) {
+						minHeight = abs(vertices[vertexIndex].pos.y);
+					}
 
 					float hL = getHeight(xOff - 1, yOff);
 					float hR = getHeight(xOff + 1, yOff);
@@ -255,6 +267,10 @@ namespace vks
 					vertexIndex++;
 				}
 			}
+
+			// @todo: slighlty alter to take e.g. added trees into account
+			maxHeight += 20.0f;
+			minHeight -= 20.0f;
 
 			VkDeviceSize vertexBufferSize = verticesPerLine * verticesPerLine * sizeof(Vertex);
 			VkDeviceSize indexBufferSize = (verticesPerLine - 1) * (verticesPerLine - 1) * 6 * sizeof(uint32_t);
