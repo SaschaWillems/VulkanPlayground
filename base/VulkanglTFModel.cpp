@@ -218,11 +218,22 @@ void vkglTF::Texture::fromglTfImage(tinygltf::Image &gltfimage, std::string path
 			imageBlit.srcOffsets[1].y = int32_t(height >> (i - 1));
 			imageBlit.srcOffsets[1].z = 1;
 
+			int dstWidth = int32_t(width >> i);
+			int dstHeight = int32_t(height >> i);
+
+			if (dstWidth == 0) {
+				dstWidth = dstHeight;
+			}
+
+			if (dstHeight == 0) {
+				dstHeight = dstWidth;
+			}
+
 			imageBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 			imageBlit.dstSubresource.layerCount = 1;
 			imageBlit.dstSubresource.mipLevel = i;
-			imageBlit.dstOffsets[1].x = int32_t(width >> i);
-			imageBlit.dstOffsets[1].y = int32_t(height >> i);
+			imageBlit.dstOffsets[1].x = dstWidth;
+			imageBlit.dstOffsets[1].y = dstHeight;
 			imageBlit.dstOffsets[1].z = 1;
 
 			VkImageSubresourceRange mipSubRange = {};
