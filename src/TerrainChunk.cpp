@@ -49,7 +49,7 @@ float TerrainChunk::getHeight(int x, int y) {
 	return heightMap->getHeight(x, y);
 }
 
-void TerrainChunk::updateTrees(float minHeight) {
+void TerrainChunk::updateTrees() {
 	assert(heightMap);
 	if (instanceBuffer.buffer != VK_NULL_HANDLE) {
 		instanceBuffer.destroy();
@@ -79,7 +79,7 @@ void TerrainChunk::updateTrees(float minHeight) {
 		float h3 = getHeight(terrainX, terrainY - 1);
 		float h4 = getHeight(terrainX, terrainY + 1);
 		float h = (h1 + h2 + h3 + h4) / 4.0f;
-		if ((h <= minHeight) || (h > 15.0f)) {
+		if ((h <= heightMapSettings.waterPosition) || (h > 15.0f)) {
 			continue;
 		}
 		InstanceData inst{};

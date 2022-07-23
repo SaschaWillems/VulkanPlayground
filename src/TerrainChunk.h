@@ -39,6 +39,6 @@ public:
 	void update();
 	void updateHeightMap();
 	float getHeight(int x, int y);
-	void updateTrees(float minHeight);
+	void updateTrees();
 	void draw(CommandBuffer* cb);
 };

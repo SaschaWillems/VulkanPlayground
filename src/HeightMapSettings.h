@@ -38,6 +38,10 @@ public:
 	float fogColor[3] = { 0.47f, 0.5f, 0.67f };
 	std::string skySphere = "skysphere01.ktx";
 
+	float waterPosition = 1.75f;
+
+	float maxChunkDrawDistance = 460.0f;
+
 	void loadFromFile(const std::string filename);
 };
 

@@ -37,6 +37,7 @@
 #include "frustum.hpp"
 #include "TerrainChunk.h"
 #include "HeightMapSettings.h"
+#include "InfiniteTerrain.h"
 
 #define ENABLE_VALIDATION false
 #define FB_DIM 1024
@@ -48,111 +49,6 @@ VkQueue defaultQueue;
 VkQueue transferQueue;
 vks::Frustum frustum;
 const float chunkDim = 241.0f;
-float waterPosition = 1.75f;
-
-class InfiniteTerrain {
-public:
-	float maxViewDst = 300.0f;
-	glm::vec2 viewerPosition;
-	int chunkSize;
-	int chunksVisibleInViewDistance;
-
-	std::vector<TerrainChunk*> terrainChunks{};
-	std::vector<TerrainChunk*> terrainChunkgsUpdateList{};
-
-	InfiniteTerrain() {
-		chunkSize = heightMapSettings.mapChunkSize - 1;
-		chunksVisibleInViewDistance = round(maxViewDst / chunkSize);
-	}
-
-	bool chunkPresent(glm::ivec2 coords) {
-		for (auto &chunk : terrainChunks) {
-			if (chunk->position.x == coords.x && chunk->position.y == coords.y) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	TerrainChunk* getChunk(glm::ivec2 coords) {
-		for (auto& chunk : terrainChunks) {
-			if (chunk->position.x == coords.x && chunk->position.y == coords.y) {
-				return chunk;
-			}
-		}
-		return nullptr;
-	}
-
-	int getVisibleChunkCount() {
-		int count = 0;
-		for (auto& chunk : terrainChunks) {
-			if (chunk->visible) {
-				count++;
-			}
-		}
-		return count;
-	}
-
-	bool updateVisibleChunks(Camera &camera) {
-
-		bool res = false;
-		int currentChunkCoordX = (int)round(viewerPosition.x / (float)chunkSize);
-		int currentChunkCoordY = (int)round(viewerPosition.y / (float)chunkSize);
-		for (int yOffset = -chunksVisibleInViewDistance; yOffset <= chunksVisibleInViewDistance; yOffset++) {
-			for (int xOffset = -chunksVisibleInViewDistance; xOffset <= chunksVisibleInViewDistance; xOffset++) {
-				glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
-				if (chunkPresent(viewedChunkCoord)) {
-					TerrainChunk* chunk = getChunk(viewedChunkCoord);
-					chunk->visible = true;
-				} else {
-					int l = heightMapSettings.levelOfDetail;
-					TerrainChunk* newChunk = new TerrainChunk(viewedChunkCoord, chunkSize);
-					terrainChunks.push_back(newChunk);
-					terrainChunkgsUpdateList.push_back(newChunk);
-					heightMapSettings.levelOfDetail = l;
-					std::cout << "Added new terrain chunk at " << viewedChunkCoord.x << " / " << viewedChunkCoord.y << "\n";
-					std::cout << "Center is " << newChunk->center.x << " / " << newChunk->center.y << "\n";
-					res = true;
-				}
-			}
-		}
-
-		// Update visibility
-		for (auto& chunk : terrainChunks) {
-			chunk->visible = frustum.checkBox(chunk->center, chunk->min, chunk->max);
-		}
-
-		return res;
-	}
-
-	void updateChunks() {
-		for (auto& terrainChunk : terrainChunks) {
-			int l = heightMapSettings.levelOfDetail;
-			//heightMapSettings.levelOfDetail = 6;
-			heightMapSettings.offset.x = (float)terrainChunk->position.x * (float)(chunkSize);
-			heightMapSettings.offset.y = (float)terrainChunk->position.y * (float)(chunkSize);
-			terrainChunk->updateHeightMap();
-			terrainChunk->updateTrees(waterPosition);
-			terrainChunk->hasValidMesh = true;
-			heightMapSettings.levelOfDetail = l;
-		}
-	}
-
-	void clear() {
-		vkQueueWaitIdle(defaultQueue);
-		vkQueueWaitIdle(transferQueue);
-		for (auto& chunk : terrainChunks) {
-			if (chunk->hasValidMesh) {
-				chunk->heightMap->vertexBuffer.destroy();
-				chunk->heightMap->indexBuffer.destroy();
-				chunk->instanceBuffer.destroy();
-			}
-			delete chunk;
-		}
-		terrainChunks.resize(0);
-	}
-
-};
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -379,7 +275,7 @@ public:
 					heightMapSettings.offset.x = (float)chunk->position.x * (float)(chunk->size);
 					heightMapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
 					chunk->updateHeightMap();
-					chunk->updateTrees(waterPosition);
+					chunk->updateTrees();
 					chunk->min.y = chunk->heightMap->minHeight;
 					chunk->max.y = chunk->heightMap->maxHeight;
 					chunk->hasValidMesh = true;
@@ -624,11 +520,11 @@ public:
 
 		switch (drawType) {
 		case SceneDrawType::sceneDrawTypeRefract:
-			pushConst.clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, waterPosition);
+			pushConst.clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, heightMapSettings.waterPosition);
 			pushConst.shadows = 0;
 			break;
 		case SceneDrawType::sceneDrawTypeReflect:
-			pushConst.clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, waterPosition);
+			pushConst.clipPlane = glm::vec4(0.0f, 1.0f, 0.0f, heightMapSettings.waterPosition);
 			pushConst.shadows = 0;
 			break;
 		}
@@ -656,7 +552,7 @@ public:
 				//pos.x = 0.0f;
 				//pos.y = 0.0f;
 				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
-					pos.y += waterPosition * 2.0f;
+					pos.y += heightMapSettings.waterPosition * 2.0f;
 					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_BACK_BIT);
 				} else {
 					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
@@ -674,7 +570,7 @@ public:
 			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.water);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
-					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, -waterPosition, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 1.0f, chunkDim - 1.0f);
+					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, -heightMapSettings.waterPosition, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 1.0f, chunkDim - 1.0f);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 					models.plane.draw(cb->handle);
 				}
@@ -1065,7 +961,7 @@ public:
 	void generateTerrain()
 	{
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		infiniteTerrain.updateVisibleChunks(camera);
+		infiniteTerrain.updateVisibleChunks(frustum);
 	}
 
 	void updateHeightmap(bool firstRun)
@@ -1602,6 +1498,7 @@ public:
 		}
 
 		VulkanContext::copyQueue = transferQueue;
+		VulkanContext::graphicsQueue = queue;
 		VulkanContext::device = vulkanDevice;
 
 		hasExtMemoryBudget = vulkanDevice->extensionSupported("VK_EXT_memory_budget");
@@ -1742,7 +1639,7 @@ public:
 			frustum.update(camera.matrices.perspective * camera.matrices.view);
 		}
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		infiniteTerrain.updateVisibleChunks(camera);
+		infiniteTerrain.updateVisibleChunks(frustum);
 	}
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
