@@ -745,6 +745,139 @@ namespace vks
 			// Update descriptor image info member that can be used for setting up descriptor sets
 			updateDescriptor();
 		}
+
+		// @todo
+		void loadFromFiles(
+			std::vector<std::string> filenames,
+			VkFormat format,
+			vks::VulkanDevice* device,
+			VkQueue copyQueue,
+			VkImageUsageFlags imageUsageFlags = VK_IMAGE_USAGE_SAMPLED_BIT,
+			VkImageLayout imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			this->device = device;
+
+			std::vector<ktxTexture*> ktxTextures(filenames.size());
+			for (size_t i = 0; i < filenames.size(); i++) {
+				ktxResult result = loadKTXFile(filenames[i], &ktxTextures[i]);
+				if (i == 0) {
+					width = ktxTextures[i]->baseWidth;
+					height = ktxTextures[i]->baseHeight;
+					mipLevels = ktxTextures[i]->numLevels;
+				} else {
+					assert((ktxTextures[i]->baseWidth == width) && (ktxTextures[i]->baseHeight == height) && (ktxTextures[i]->numLevels == mipLevels));
+				}
+				assert(result == KTX_SUCCESS);
+			}
+
+			std::vector<vks::Buffer> stagingBuffers(filenames.size());
+			for (size_t i = 0; i < filenames.size(); i++) {
+				ktxTexture* ktxTexture = ktxTextures[i];
+				ktx_uint8_t* ktxTextureData = ktxTexture_GetData(ktxTexture);
+				ktx_size_t ktxTextureSize = ktxTexture_GetSize(ktxTexture);
+				device->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffers[i], ktxTextureSize, ktxTextureData);
+			}
+
+			layerCount = static_cast<uint32_t>(filenames.size());
+
+			// Create optimal tiled target image
+			VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
+			imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+			imageCreateInfo.format = format;
+			imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+			imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+			imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			imageCreateInfo.extent = { width, height, 1 };
+			imageCreateInfo.usage = imageUsageFlags;
+			if (!(imageCreateInfo.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+				imageCreateInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			}
+			imageCreateInfo.arrayLayers = layerCount;
+			imageCreateInfo.mipLevels = mipLevels;
+			VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
+			VkMemoryRequirements memReqs;
+			VK_CHECK_RESULT(vkCreateImage(device->logicalDevice, &imageCreateInfo, nullptr, &image));
+			vkGetImageMemoryRequirements(device->logicalDevice, image, &memReqs);
+			memAllocInfo.allocationSize = memReqs.size;
+			memAllocInfo.memoryTypeIndex = device->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			VK_CHECK_RESULT(vkAllocateMemory(device->logicalDevice, &memAllocInfo, nullptr, &deviceMemory));
+			VK_CHECK_RESULT(vkBindImageMemory(device->logicalDevice, image, deviceMemory, 0));
+
+			// Use a separate command buffer for texture loading
+			VkCommandBuffer copyCmd = device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+
+			// Image barrier for optimal image (target)
+			// Set initial layout for all array layers (faces) of the optimal (target) tiled texture
+			VkImageSubresourceRange subresourceRange = {};
+			subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			subresourceRange.baseMipLevel = 0;
+			subresourceRange.levelCount = mipLevels;
+			subresourceRange.layerCount = layerCount;
+
+			vks::tools::setImageLayout(copyCmd, image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresourceRange);
+
+			for (size_t i = 0; i < filenames.size(); i++) {
+				std::vector<VkBufferImageCopy> bufferCopyRegions;
+				for (uint32_t level = 0; level < mipLevels; level++)
+				{
+					ktx_size_t offset;
+					KTX_error_code result = ktxTexture_GetImageOffset(ktxTextures[i], level, 0, 0, &offset);
+					assert(result == KTX_SUCCESS);
+					VkBufferImageCopy bufferCopyRegion = {};
+					bufferCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+					bufferCopyRegion.imageSubresource.mipLevel = level;
+					bufferCopyRegion.imageSubresource.baseArrayLayer = i;
+					bufferCopyRegion.imageSubresource.layerCount = 1;
+					bufferCopyRegion.imageExtent.width = width >> level;
+					bufferCopyRegion.imageExtent.height = height >> level;
+					bufferCopyRegion.imageExtent.depth = 1;
+					bufferCopyRegion.bufferOffset = offset;
+					bufferCopyRegions.push_back(bufferCopyRegion);
+				}
+				vkCmdCopyBufferToImage(copyCmd, stagingBuffers[i].buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(bufferCopyRegions.size()), bufferCopyRegions.data());
+			}
+			this->imageLayout = imageLayout;
+			vks::tools::setImageLayout(copyCmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, imageLayout, subresourceRange);
+
+			device->flushCommandBuffer(copyCmd, copyQueue);
+
+			// Create sampler
+			VkSamplerCreateInfo samplerCreateInfo = vks::initializers::samplerCreateInfo();
+			samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
+			samplerCreateInfo.minFilter = VK_FILTER_LINEAR;
+			samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+			samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+			samplerCreateInfo.addressModeV = samplerCreateInfo.addressModeU;
+			samplerCreateInfo.addressModeW = samplerCreateInfo.addressModeU;
+			samplerCreateInfo.mipLodBias = 0.0f;
+			samplerCreateInfo.maxAnisotropy = device->enabledFeatures.features.samplerAnisotropy ? device->properties.limits.maxSamplerAnisotropy : 1.0f;
+			samplerCreateInfo.anisotropyEnable = device->enabledFeatures.features.samplerAnisotropy;
+			samplerCreateInfo.compareOp = VK_COMPARE_OP_NEVER;
+			samplerCreateInfo.minLod = 0.0f;
+			samplerCreateInfo.maxLod = (float)mipLevels;
+			samplerCreateInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+			VK_CHECK_RESULT(vkCreateSampler(device->logicalDevice, &samplerCreateInfo, nullptr, &sampler));
+
+			// Create image view
+			VkImageViewCreateInfo viewCreateInfo = vks::initializers::imageViewCreateInfo();
+			viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+			viewCreateInfo.format = format;
+			viewCreateInfo.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
+			viewCreateInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+			viewCreateInfo.subresourceRange.layerCount = layerCount;
+			viewCreateInfo.subresourceRange.levelCount = mipLevels;
+			viewCreateInfo.image = image;
+			VK_CHECK_RESULT(vkCreateImageView(device->logicalDevice, &viewCreateInfo, nullptr, &view));
+
+			// Clean up staging resources
+			for (size_t i = 0; i < filenames.size(); i++) {
+				ktxTexture_Destroy(ktxTextures[i]);
+				stagingBuffers[i].destroy();
+			}
+
+			updateDescriptor();
+		}
 	};
 
 	/** @brief Cube map texture */
