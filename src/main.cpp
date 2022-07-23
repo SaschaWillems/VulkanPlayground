@@ -44,9 +44,6 @@
 #define SHADOWMAP_DIM 4096
 #define SHADOW_MAP_CASCADE_COUNT 4
 
-vks::VulkanDevice *defaultDevice;
-VkQueue defaultQueue;
-VkQueue transferQueue;
 vks::Frustum frustum;
 const float chunkDim = 241.0f;
 
@@ -1486,20 +1483,15 @@ public:
 	{
 		VulkanExampleBase::prepare();
 
-		defaultDevice = vulkanDevice;
-		defaultQueue = queue;
-
+		VulkanContext::graphicsQueue = queue;
+		VulkanContext::device = vulkanDevice;
 		// We try to get a transfer queue for background uploads
 		if (vulkanDevice->queueFamilyIndices.graphics != vulkanDevice->queueFamilyIndices.transfer) {
 			std::cout << "Using dedicated transfer queue for background uploads\n";
-			vkGetDeviceQueue(device, vulkanDevice->queueFamilyIndices.transfer, 0, &transferQueue);
+			vkGetDeviceQueue(device, vulkanDevice->queueFamilyIndices.transfer, 0, &VulkanContext::copyQueue);
 		} else {
-			transferQueue = queue;
+			VulkanContext::copyQueue = queue;
 		}
-
-		VulkanContext::copyQueue = transferQueue;
-		VulkanContext::graphicsQueue = queue;
-		VulkanContext::device = vulkanDevice;
 
 		hasExtMemoryBudget = vulkanDevice->extensionSupported("VK_EXT_memory_budget");
 
