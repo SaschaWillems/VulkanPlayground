@@ -4,19 +4,15 @@
  */
 
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "includes/types.glsl"
 
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec3 inNormal;
 layout (location = 2) in vec2 inUV;
 
-layout (binding = 0) uniform UBO 
-{
-	mat4 projection;
-	mat4 model;
-	vec4 lightDir;
-	vec4 cameraPos;
-	float time;
-} ubo;
+layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
@@ -38,10 +34,10 @@ void main()
 	vec3 pos = inPos;
 	pos.xz *= 24.1 / 2.0;
 	pos.xyz += pushConsts.pos.xyz;
-	outPos = ubo.projection * ubo.model * vec4(pos, 1.0);
+	outPos = ubo.projection * ubo.modelview * vec4(pos, 1.0);
 	outLPos = pos;
 	outNormal = inNormal;
 	outEyePos = ubo.cameraPos.xyz - pos;
-	outViewPos = (ubo.model * vec4(pos, 1.0)).xyz;
+	outViewPos = (ubo.modelview * vec4(pos, 1.0)).xyz;
 	gl_Position = outPos;		
 }

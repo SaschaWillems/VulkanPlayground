@@ -4,6 +4,9 @@
  */
 
 #version 450 core
+#extension GL_GOOGLE_include_directive : require
+
+#include "includes/types.glsl"
 
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec3 inNormal;
@@ -20,12 +23,7 @@ layout (location = 2) out vec3 outViewVec;
 layout (location = 3) out vec3 outLightVec;
 layout (location = 4) out vec3 outViewPos;
 
-layout (set = 0, binding = 0) uniform UBO 
-{
-	mat4 projection;
-	mat4 modelview;
-	vec4 lightDir;
-} ubo;
+layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
@@ -89,4 +87,5 @@ void main(void)
 	} else {
 		gl_ClipDistance[0] = 0.0f;
 	}
+
 }

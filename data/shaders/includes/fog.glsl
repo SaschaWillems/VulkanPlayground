@@ -4,7 +4,6 @@
  */
 
 const float fogDensity = 0.05;
-//const vec3 fogColor = params.fogColor.rgb; //vec3(0.47, 0.5, 0.67);
 
 vec3 applyFog(vec3 color)
 {

@@ -7,33 +7,21 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "includes/constants.glsl"
+#include "includes/types.glsl"
 
-layout (set = 0, binding = 1) uniform sampler2D samplerHeight; 
-layout (set = 0, binding = 2) uniform sampler2DArray samplerLayers;
-layout (set = 0, binding = 3) uniform sampler2DArray shadowMap;
+layout (set = 0, binding = 1) uniform sampler2DArray samplerLayers;
+layout (set = 0, binding = 2) uniform sampler2DArray shadowMap;
 
-layout (set = 0, binding = 0) uniform UBO 
-{
-	mat4 projection;
-	mat4 modelview;
-	vec4 lightDir;
-} ubo;
+layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
 
-layout (set = 0, binding = 4) uniform UBOCSM {
+layout (set = 0, binding = 3) uniform UBOCSM {
 	vec4 cascadeSplits;
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	mat4 inverseViewMat;
 	vec4 lightDir;
 } uboCSM;
 
-layout (set = 1, binding = 0) uniform UBOParams
-{
-	uint shadows;
-	uint fog;
-	vec4 fogColor;
-	vec4 waterColor;
-	vec4 layers[6];
-} params;
+layout (set = 1, binding = 0) uniform ParamBlock { UBOParams params; };
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;

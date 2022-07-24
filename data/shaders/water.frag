@@ -7,15 +7,9 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "includes/constants.glsl"
+#include "includes/types.glsl"
 
-layout (binding = 0) uniform UBO 
-{
-	mat4 projection;
-	mat4 model;
-	vec4 lightDir;
-	vec4 cameraPos;
-	float time;
-} ubo;
+layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
 
 layout (binding = 5) uniform UBOCSM {
 	vec4 cascadeSplits;
@@ -29,13 +23,7 @@ layout (set = 0, binding = 2) uniform sampler2D samplerReflection;
 layout (set = 0, binding = 3) uniform sampler2D samplerWaterNormalMap;
 layout (set = 0, binding = 4) uniform sampler2DArray shadowMap;
 
-layout (set = 1, binding = 0) uniform UBOParams
-{
-	uint shadows;
-	uint fog;
-	vec4 fogColor;
-	vec4 waterColor;
-} params;
+layout (set = 1, binding = 0) uniform ParamBlock { UBOParams params; };
 
 layout (location = 0) in vec2 inUV;
 layout (location = 1) in vec4 inPos;
