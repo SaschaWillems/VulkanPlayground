@@ -6,6 +6,7 @@
 #version 450 core
 #extension GL_GOOGLE_include_directive : require
 
+#include "includes/constants.glsl"
 #include "includes/types.glsl"
 
 layout (location = 0) in vec3 inPos;
@@ -22,6 +23,7 @@ layout (location = 1) out vec2 outUV;
 layout (location = 2) out vec3 outViewVec;
 layout (location = 3) out vec3 outLightVec;
 layout (location = 4) out vec3 outViewPos;
+layout (location = 5) out vec3 outPos;
 
 layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
 
@@ -75,6 +77,7 @@ void main(void)
 
 	gl_Position = ubo.projection * ubo.modelview * pos;
 
+	outPos = pos.xyz;
 	outViewVec = -pos.xyz;
 	outLightVec = normalize(ubo.lightDir.xyz + outViewVec);
 	outViewPos = (ubo.modelview * vec4(pos.xyz, 1.0)).xyz;

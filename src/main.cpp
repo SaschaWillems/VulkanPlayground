@@ -55,6 +55,7 @@ public:
 	bool displayWaterPlane = true;
 	bool displayWireFrame = false;
 	bool renderShadows = true;
+	bool renderTrees = true;
 	bool fixFrustum = false;
 	bool hasExtMemoryBudget = false;
 
@@ -155,7 +156,7 @@ public:
 	struct UniformDataParams {
 		uint32_t shadows = 0;
 		uint32_t fog = 1;
-		uint32_t _pad0;
+		uint32_t alphaDiscard = 0;
 		uint32_t _pad1;
 		glm::vec4 fogColor;
 		glm::vec4 waterColor;
@@ -179,6 +180,7 @@ public:
 		DescriptorSet* skysphere;
 		DescriptorSet* sceneMatrices;
 		DescriptorSet* sceneParams;
+		DescriptorSet* shadowCascades;
 	} descriptorSets;
 
 	struct {
@@ -188,6 +190,7 @@ public:
 		// @todo
 		DescriptorSetLayout* ubo;
 		DescriptorSetLayout* images;
+		DescriptorSetLayout* shadowCascades;
 	} descriptorSetLayouts;
 
 	// Framebuffer for offscreen rendering
@@ -477,6 +480,8 @@ public:
 			glm::vec4 clipPlane = glm::vec4(0.0f);
 			uint32_t shadows = 1;
 		} pushConst;
+		pushConst.shadows = renderShadows ? 1 : 0;
+
 		if (drawType == SceneDrawType::sceneDrawTypeReflect) {
 			pushConst.scale = glm::scale(pushConst.scale, glm::vec3(1.0f, -1.0f, 1.0f));
 		}
@@ -541,23 +546,29 @@ public:
 		}
 
 		// Trees
-		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
-		if (drawType != SceneDrawType::sceneDrawTypeRefract) {
-			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
-					VkDeviceSize offsets[1] = { 0 };
-					vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
-					// @todo: offset pos by waterplane? also needed for terrain?
-					cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
-					cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
-					cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneParams }, 2);
-					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
-					if (drawType == SceneDrawType::sceneDrawTypeReflect) {
-						pos.y += waterPosition * 2.0f;
+		if (renderTrees) {
+			vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
+			if (drawType != SceneDrawType::sceneDrawTypeRefract) {
+				for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+					if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+						pushConst.alpha = terrainChunk->alpha;
+						cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+						VkDeviceSize offsets[1] = { 0 };
+						vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
+						// @todo: offset pos by waterplane? also needed for terrain?
+						cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
+						cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
+						// Set 1 is bound in the glTF model renderer
+						cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneParams }, 2);
+						cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.shadowCascades }, 3);
+						glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+						if (drawType == SceneDrawType::sceneDrawTypeReflect) {
+							pos.y += heightMapSettings.waterPosition * 2.0f;
+						}
+						cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+						vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+						models.trees[heightMapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
 					}
-					cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
-					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-					models.trees[heightMapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
 				}
 			}
 		}
@@ -945,15 +956,21 @@ public:
 
 	void setupDescriptorSetLayout()
 	{
-		// Trees (@todo: glTF models in general)
+		// @todo
 		descriptorSetLayouts.ubo = new DescriptorSetLayout(device);
 		descriptorSetLayouts.ubo->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.ubo->create();
 
-		// @todo: remove
+		// @todo
 		descriptorSetLayouts.images = new DescriptorSetLayout(device);
 		descriptorSetLayouts.images->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.images->create();
+
+		// @todo
+		descriptorSetLayouts.shadowCascades = new DescriptorSetLayout(device);
+		descriptorSetLayouts.shadowCascades->addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.shadowCascades->addBinding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.shadowCascades->create();
 
 		// Shared (use all layout bindings)
 		descriptorSetLayouts.textured = new DescriptorSetLayout(device);
@@ -982,13 +999,13 @@ public:
 		descriptorSetLayouts.terrain->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.terrain->addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.terrain->addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
-		descriptorSetLayouts.terrain->addBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT);
-		descriptorSetLayouts.terrain->addBinding(4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
+		descriptorSetLayouts.terrain->addBinding(3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		descriptorSetLayouts.terrain->create();
 
 		pipelineLayouts.terrain = new PipelineLayout(device);
 		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.terrain);
 		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.ubo);
+		pipelineLayouts.terrain->addLayout(descriptorSetLayouts.shadowCascades);
 		pipelineLayouts.terrain->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.terrain->create();
 
@@ -996,6 +1013,7 @@ public:
 		pipelineLayouts.tree->addLayout(descriptorSetLayouts.ubo);
 		pipelineLayouts.tree->addLayout(vkglTF::descriptorSetLayoutImage);
 		pipelineLayouts.tree->addLayout(descriptorSetLayouts.ubo);
+		pipelineLayouts.tree->addLayout(descriptorSetLayouts.shadowCascades);
 		pipelineLayouts.tree->addPushConstantRange(108, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		pipelineLayouts.tree->create();
 
@@ -1101,6 +1119,14 @@ public:
 		cascadeDebug.descriptorSet->addLayout(cascadeDebug.descriptorSetLayout);
 		cascadeDebug.descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
 		cascadeDebug.descriptorSet->create();
+
+		// @todo
+		descriptorSets.shadowCascades = new DescriptorSet(device);
+		descriptorSets.shadowCascades->setPool(descriptorPool);
+		descriptorSets.shadowCascades->addLayout(descriptorSetLayouts.shadowCascades);
+		descriptorSets.shadowCascades->addDescriptor(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthMapDescriptor);
+		descriptorSets.shadowCascades->addDescriptor(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniformBuffers.CSM.descriptor);
+		descriptorSets.shadowCascades->create();
 	}
 
 	void preparePipelines()
@@ -1620,6 +1646,7 @@ public:
 		updateParamsReq |= overlay->checkBox("Fog", &uniformDataParams.fog);
 		updateParamsReq |= overlay->checkBox("Shadows", &renderShadows);
 		overlay->checkBox("Trees", &renderTrees);
+		updateParamsReq |= overlay->checkBox("Alpha discard", &uniformDataParams.alphaDiscard);
 		if (overlay->sliderFloat("Chunk draw distance", &heightMapSettings.maxChunkDrawDistance, 0.0f, 1024.0f)) {
 			infiniteTerrain.updateViewDistance(heightMapSettings.maxChunkDrawDistance);
 		}

@@ -14,12 +14,16 @@ layout (location = 1) in vec2 inUV;
 layout (location = 2) in vec3 inViewVec;
 layout (location = 3) in vec3 inLightVec;
 layout (location = 4) in vec3 inViewPos;
+layout (location = 5) in vec3 inPos;
 
 layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
 
 layout (set = 1, binding = 0) uniform sampler2D samplerColorMap;
 
 layout (set = 2, binding = 0) uniform ParamBlock { UBOParams params; };
+
+layout (set = 3, binding = 0) uniform sampler2DArray shadowMap;
+layout (set = 3, binding = 1) uniform UBOCSM { UBOShadowCascades uboCSM; };
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
@@ -31,26 +35,36 @@ layout(push_constant) uniform PushConsts {
 layout (location = 0) out vec4 outFragColor;
 
 #include "includes/fog.glsl"
+#include "includes/shadow.glsl"
 
 void main(void)
 {
 	vec4 colorMap = texture(samplerColorMap, inUV);
-//	float a = textureLod(samplerColorMap, inUV, 0.0).a;
-//
-//	if (a < 0.1 /*material.alphaMaskCutoff*/) {
-//		discard;
-//	}
+	if (params.alphaDiscard == 1) {
+		float a = textureLod(samplerColorMap, inUV, 0.0).a;
+		if (a < 0.1 /*material.alphaMaskCutoff*/) {
+			discard;
+		}
+	}
 
-	 // Lighting
-	float amb = 0.75;
+	// Shadows
 	float shadow = 1.0;
+	if (params.shadows > 0) {
+		shadow = shadowMapping(vec4(0.0), inPos, shadowMap);
+	}
+
+	// Lighting
+	float amb = 0.75;
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(inLightVec);
 	vec3 V = normalize(inViewVec);
 	vec3 R = reflect(-L, N);
 	vec3 diffuse = max(dot(N, L), amb).rrr;
 	const float specular = 0.0f; //pow(max(dot(R, V), 0.0), 32.0);
-	vec3 color = vec3(diffuse * colorMap.rgb + specular);
+
+	vec3 color = (ambient + (1.0 - shadow) * diffuse) * colorMap.rgb;
+
+//	vec3 color = vec3(diffuse * colorMap.rgb + specular);
 	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color), colorMap.a);
 	} else {
