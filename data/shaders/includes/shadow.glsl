@@ -3,6 +3,13 @@
  * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
  */
 
+const mat4 biasMat = mat4( 
+	0.5, 0.0, 0.0, 0.0,
+	0.0, 0.5, 0.0, 0.0,
+	0.0, 0.0, 1.0, 0.0,
+	0.5, 0.5, 0.0, 1.0 
+);
+
 float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex, sampler2DArray shadowCascades)
 {
 	float shadow = 0.0;
@@ -19,7 +26,7 @@ float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex, sampler2DArr
 
 float filterPCF(vec4 sc, uint cascadeIndex, sampler2DArray shadowCascades)
 {
-	ivec2 texDim = textureSize(shadowMap, 0).xy;
+	ivec2 texDim = textureSize(shadowCascades, 0).xy;
 	float scale = 0.75;
 	float dx = scale * 1.0 / float(texDim.x);
 	float dy = scale * 1.0 / float(texDim.y);
@@ -37,7 +44,7 @@ float filterPCF(vec4 sc, uint cascadeIndex, sampler2DArray shadowCascades)
 	return shadowFactor / count;
 }
 
-float shadowMapping(vec4 dist, vec3 pos)
+float shadowMapping(vec4 dist, vec3 pos, sampler2DArray shadowCascades)
 {
 	// Get cascade index for the current fragment's view position
 	uint cascadeIndex = 0;
@@ -53,8 +60,8 @@ float shadowMapping(vec4 dist, vec3 pos)
 	float shadow = 0;
 	bool enablePCF = false;
 	if (enablePCF) {
-		return filterPCF(shadowCoord / shadowCoord.w, cascadeIndex, shadowMap);
+		return filterPCF(shadowCoord / shadowCoord.w, cascadeIndex, shadowCascades);
 	} else {
-		return textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex, shadowMap);
+		return textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex, shadowCascades);
 	}
 }

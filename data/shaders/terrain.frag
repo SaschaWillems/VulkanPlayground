@@ -34,13 +34,6 @@ layout (location = 7) in float inTerrainHeight;
 
 layout (location = 0) out vec4 outFragColor;
 
-const mat4 biasMat = mat4( 
-	0.5, 0.0, 0.0, 0.0,
-	0.0, 0.5, 0.0, 0.0,
-	0.0, 0.0, 1.0, 0.0,
-	0.5, 0.5, 0.0, 1.0 
-);
-
 #include "includes/fog.glsl"
 #include "includes/shadow.glsl"
 
@@ -81,7 +74,7 @@ void main()
 	// Shadows
 	float shadow = 1.0;
 	if (params.shadows > 0) {
-		shadow = shadowMapping(vec4(0.0), inPos);
+		shadow = shadowMapping(vec4(0.0), inPos, shadowMap);
 	}
 
 	// Directional light

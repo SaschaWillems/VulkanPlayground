@@ -27,13 +27,6 @@ layout (location = 6) in vec3 inLPos;
 
 layout (location = 0) out vec4 outFragColor;
 
-const mat4 biasMat = mat4( 
-	0.5, 0.0, 0.0, 0.0,
-	0.0, 0.5, 0.0, 0.0,
-	0.0, 0.0, 1.0, 0.0,
-	0.5, 0.5, 0.0, 1.0 
-);
-
 #include "includes/fog.glsl"
 #include "includes/shadow.glsl"
 
@@ -73,7 +66,7 @@ void main()
 	if (gl_FrontFacing) {
 		float shadow = 1.0;
 		if (params.shadows > 0) {
-			shadow = shadowMapping(dudv, inLPos);
+			shadow = shadowMapping(dudv, inLPos, shadowMap);
 		}
 		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);
 		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);
