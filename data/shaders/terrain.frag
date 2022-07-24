@@ -9,17 +9,10 @@
 #include "includes/constants.glsl"
 #include "includes/types.glsl"
 
+layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
 layout (set = 0, binding = 1) uniform sampler2DArray samplerLayers;
 layout (set = 0, binding = 2) uniform sampler2DArray shadowMap;
-
-layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
-
-layout (set = 0, binding = 3) uniform UBOCSM {
-	vec4 cascadeSplits;
-	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
-	mat4 inverseViewMat;
-	vec4 lightDir;
-} uboCSM;
+layout (set = 0, binding = 3) uniform UBOCSM { UBOShadowCascades uboCSM; };
 
 layout (set = 1, binding = 0) uniform ParamBlock { UBOParams params; };
 
@@ -49,40 +42,7 @@ const mat4 biasMat = mat4(
 );
 
 #include "includes/fog.glsl"
-
-float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex)
-{
-	float shadow = 0.0;
-	float bias = 0.005;
-	if ( shadowCoord.z > -1.0 && shadowCoord.z < 1.0 ) {
-		float dist = texture(shadowMap, vec3(shadowCoord.st + offset, cascadeIndex)).r;
-		if (shadowCoord.w > 0 && dist < shadowCoord.z - bias) {
-			shadow = 1.0;
-		}
-	}
-	return shadow;
-
-}
-
-float filterPCF(vec4 sc, uint cascadeIndex)
-{
-	ivec2 texDim = textureSize(shadowMap, 0).xy;
-	float scale = 0.75;
-	float dx = scale * 1.0 / float(texDim.x);
-	float dy = scale * 1.0 / float(texDim.y);
-
-	float shadowFactor = 0.0;
-	int count = 0;
-	int range = 1;
-	
-	for (int x = -range; x <= range; x++) {
-		for (int y = -range; y <= range; y++) {
-			shadowFactor += textureProj(sc, vec2(dx*x, dy*y), cascadeIndex);
-			count++;
-		}
-	}
-	return shadowFactor / count;
-}
+#include "includes/shadow.glsl"
 
 vec3 triPlanarBlend(vec3 worldNormal){
 	vec3 blending = abs(worldNormal);
@@ -119,23 +79,9 @@ vec3 sampleTerrainLayer()
 void main()
 {
 	// Shadows
-	float shadow = 0.0f;
-	bool enablePCF = false;
-	if (pushConsts.shadows > 0) {
-		// Get cascade index for the current fragment's view position
-		uint cascadeIndex = 0;
-		for(uint i = 0; i < SHADOW_MAP_CASCADE_COUNT - 1; ++i) {
-			if(inViewPos.z < uboCSM.cascadeSplits[i]) {	
-				cascadeIndex = i + 1;
-			}
-		}
-		// Depth compare for shadowing
-		vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inPos, 1.0);	
-		if (enablePCF) {
-			shadow = filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
-		} else {
-			shadow = textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
-		}
+	float shadow = 1.0;
+	if (params.shadows > 0) {
+		shadow = shadowMapping(vec4(0.0), inPos);
 	}
 
 	// Directional light

@@ -10,18 +10,11 @@
 #include "includes/types.glsl"
 
 layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
-
-layout (binding = 5) uniform UBOCSM {
-	vec4 cascadeSplits;
-	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
-	mat4 inverseViewMat;
-	vec4 lightDir;
-} uboCSM;
-
 layout (set = 0, binding = 1) uniform sampler2D samplerRefraction;
 layout (set = 0, binding = 2) uniform sampler2D samplerReflection;
 layout (set = 0, binding = 3) uniform sampler2D samplerWaterNormalMap;
 layout (set = 0, binding = 4) uniform sampler2DArray shadowMap;
+layout (set = 0, binding = 5) uniform UBOCSM { UBOShadowCascades uboCSM; };
 
 layout (set = 1, binding = 0) uniform ParamBlock { UBOParams params; };
 
@@ -43,28 +36,6 @@ const mat4 biasMat = mat4(
 
 #include "includes/fog.glsl"
 #include "includes/shadow.glsl"
-
-float shadowMapping(vec4 dist)
-{
-	// Get cascade index for the current fragment's view position
-	uint cascadeIndex = 0;
-	for(uint i = 0; i < SHADOW_MAP_CASCADE_COUNT - 1; ++i) {
-		if(inViewPos.z < uboCSM.cascadeSplits[i]) {	
-			cascadeIndex = i + 1;
-		}
-	}
-
-	// Depth compare for shadowing
-	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(inLPos +dist.xyz, 1.0);	
-
-	float shadow = 0;
-	bool enablePCF = false;
-	if (enablePCF) {
-		return filterPCF(shadowCoord / shadowCoord.w, cascadeIndex);
-	} else {
-		return textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex);
-	}
-}
 
 void main() 
 {
@@ -102,11 +73,12 @@ void main()
 	if (gl_FrontFacing) {
 		float shadow = 1.0;
 		if (params.shadows > 0) {
-			shadow = shadowMapping(dudv);
+			shadow = shadowMapping(dudv, inLPos);
 		}
-		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st) * shadow;// * (ambient + shadow) * waterColor;
-		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st) * shadow;// * (ambient + shadow);
+		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);
+		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);
 		color *= mix(refraction, reflection, fresnel);
+		color *= (ambient + (1.0 - shadow));
 	}
 
 	if (params.fog == 1) {

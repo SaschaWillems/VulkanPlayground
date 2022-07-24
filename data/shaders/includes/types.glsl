@@ -6,6 +6,7 @@
 struct UBOParams {
 	uint shadows;
 	uint fog;
+	uint alphaDiscard;
 	vec4 fogColor;
 	vec4 waterColor;
 	vec4 layers[6];
@@ -17,4 +18,11 @@ struct UBOShared {
 	vec4 lightDir;
 	vec4 cameraPos;
 	float time;
+};
+
+struct UBOShadowCascades {
+	vec4 cascadeSplits;
+	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
+	mat4 inverseViewMat;
+	vec4 lightDir;
 };
