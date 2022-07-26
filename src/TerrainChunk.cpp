@@ -121,7 +121,11 @@ void TerrainChunk::updateTrees() {
 	vks::Buffer stagingBuffer;
 	VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
 	VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &instanceBuffer, stagingBuffer.size));
-	VulkanContext::device->copyBuffer(&stagingBuffer, &instanceBuffer, VulkanContext::copyQueue);
+	VkCommandBuffer copyCmd = VulkanContext::device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true, VK_QUEUE_TRANSFER_BIT);
+	VkBufferCopy bufferCopy{};
+	bufferCopy.size = stagingBuffer.size;
+	vkCmdCopyBuffer(copyCmd, stagingBuffer.buffer, instanceBuffer.buffer, 1, &bufferCopy);
+	VulkanContext::device->flushCommandBuffer(copyCmd, VulkanContext::copyQueue, true, VK_QUEUE_TRANSFER_BIT);
 	stagingBuffer.destroy();
 }
 
