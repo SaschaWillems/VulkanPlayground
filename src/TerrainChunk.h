@@ -19,26 +19,42 @@ struct InstanceData {
 	glm::vec3 pos;
 	glm::vec3 scale;
 	glm::vec3 rotation;
+	glm::vec2 uv;
+	glm::vec4 color;
+};
+
+struct ObjectData {
+	glm::vec3 worldpos;
+	glm::vec3 scale;
+	glm::vec3 rotation;
+	glm::vec4 color;
+	glm::vec2 uv;
+	float distance;
+	int visibilityInfo = 0;
 };
 
 class TerrainChunk {
 public:
 	vks::HeightMap* heightMap = nullptr;
-	vks::Buffer instanceBuffer;
 	glm::ivec2 position;
 	glm::vec3 center;
 	glm::vec3 min;
 	glm::vec3 max;
+	std::vector<ObjectData> trees;
 	int size;
 	bool hasValidMesh = false;
 	bool visible = false;
-	int treeInstanceCount;
+	int treeInstanceCount = 0;
+	int grassInstanceCount = 0;
 	float alpha = 0.0f;
 
 	TerrainChunk(glm::ivec2 coords, int size);
+	~TerrainChunk();
 	void update();
 	void updateHeightMap();
 	float getHeight(int x, int y);
 	void updateTrees();
+	void updateGrass();
+	void uploadBuffers();
 	void draw(CommandBuffer* cb);
 };

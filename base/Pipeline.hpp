@@ -81,6 +81,14 @@ public:
 	void setCache(VkPipelineCache cache) {
 		this->cache = cache;
 	}
+	void setSampleCount(VkSampleCountFlagBits sampleCount) {
+		VkPipelineMultisampleStateCreateInfo* pMultisampleState = (VkPipelineMultisampleStateCreateInfo*)this->pipelineCI.pMultisampleState;
+		pMultisampleState->rasterizationSamples = sampleCount;
+		// @todo
+		if (sampleCount != VK_SAMPLE_COUNT_1_BIT) {
+			pMultisampleState->alphaToCoverageEnable = VK_TRUE;
+		}
+	}
 	VkPipelineBindPoint getBindPoint() {
 		return bindPoint;
 	}

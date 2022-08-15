@@ -35,6 +35,38 @@ TerrainChunk* InfiniteTerrain::getChunk(glm::ivec2 coords) {
 	return nullptr;
 }
 
+TerrainChunk* InfiniteTerrain::getChunkFromWorldPos(glm::vec3 coords)
+{
+	int chunkCoordX = round((float)coords.x / (float)(heightMapSettings.mapChunkSize - 1));
+	int chunkCoordY = round((float)coords.z / (float)(heightMapSettings.mapChunkSize - 1));
+	for (auto& chunk : terrainChunks) {
+		if (chunk->position.x == chunkCoordX && chunk->position.y == chunkCoordY) {
+			return chunk;
+		}
+	}
+	return nullptr;
+}
+
+bool InfiniteTerrain::getHeight(const glm::vec3 worldPos, float& height)
+{
+	const int chunkCoordX = round(worldPos.x / (float)(heightMapSettings.mapChunkSize - 1));
+	const int chunkCoordY = round(worldPos.z / (float)(heightMapSettings.mapChunkSize - 1));
+	for (auto& chunk : terrainChunks) {
+		if (chunk->position.x == chunkCoordX && chunk->position.y == chunkCoordY) {
+			const float topLeftX = (chunk->position.x * (float)(vks::HeightMap::chunkSize - 1)) - (float)(vks::HeightMap::chunkSize - 1) / 2.0f;
+			const float topLeftZ = (chunk->position.y * (float)(vks::HeightMap::chunkSize - 1)) - (float)(vks::HeightMap::chunkSize - 1) / -2.0f;
+			//float h1 = chunk->getHeight(terrainX - 1, terrainY);
+			//float h2 = chunk->getHeight(terrainX + 1, terrainY);
+			//float h3 = chunk->getHeight(terrainX, terrainY - 1);
+			//float h4 = chunk->getHeight(terrainX, terrainY + 1);
+			//float h = (h1 + h2 + h3 + h4) / 4.0f;
+			height = -chunk->getHeight(round(worldPos.x - topLeftX) + 0.5f, -round(worldPos.z - topLeftZ) + 0.5f);
+			return true;
+		}
+	}
+	return false;
+}
+
 int InfiniteTerrain::getVisibleChunkCount() {
 	int count = 0;
 	for (auto& chunk : terrainChunks) {
@@ -56,7 +88,6 @@ int InfiniteTerrain::getVisibleTreeCount() {
 }
 
 bool InfiniteTerrain::updateVisibleChunks(vks::Frustum& frustum) {
-
 	bool res = false;
 	int currentChunkCoordX = (int)round(viewerPosition.x / (float)chunkSize);
 	int currentChunkCoordY = (int)round(viewerPosition.y / (float)chunkSize);
@@ -105,11 +136,6 @@ void InfiniteTerrain::clear() {
 	vkQueueWaitIdle(VulkanContext::copyQueue);
 	vkQueueWaitIdle(VulkanContext::graphicsQueue);
 	for (auto& chunk : terrainChunks) {
-		if (chunk->hasValidMesh) {
-			chunk->heightMap->vertexBuffer.destroy();
-			chunk->heightMap->indexBuffer.destroy();
-			chunk->instanceBuffer.destroy();
-		}
 		delete chunk;
 	}
 	terrainChunks.resize(0);

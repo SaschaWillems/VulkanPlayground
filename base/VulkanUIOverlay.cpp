@@ -247,6 +247,9 @@ namespace vks
 		VkPipelineMultisampleStateCreateInfo multisampleState =
 			vks::initializers::pipelineMultisampleStateCreateInfo(rasterizationSamples);
 
+		// @todo: control from setting
+		multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_4_BIT;
+
 		std::vector<VkDynamicState> dynamicStateEnables = {
 			VK_DYNAMIC_STATE_VIEWPORT,
 			VK_DYNAMIC_STATE_SCISSOR
@@ -421,6 +424,15 @@ namespace vks
 	}
 
 	bool UIOverlay::checkBox(const char *caption, int32_t *value)
+	{
+		bool val = (*value == 1);
+		bool res = ImGui::Checkbox(caption, &val);
+		*value = val;
+		if (res) { updated = true; };
+		return res;
+	}
+
+	bool UIOverlay::checkBox(const char* caption, uint32_t* value)
 	{
 		bool val = (*value == 1);
 		bool res = ImGui::Checkbox(caption, &val);

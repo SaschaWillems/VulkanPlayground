@@ -6,6 +6,14 @@
  * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
  */
 
+/*
+@todos:
+- Descriptor rework (separate sets)
+- Per-frame ubos
+- level of detail
+- Better culling
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +21,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <math.h>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -25,6 +34,7 @@
 #include "VulkanglTFModel.h"
 #include "VulkanBuffer.hpp"
 #include "VulkanHeightmap.hpp"
+//#include "threadpool.hpp"
 
 #include "Pipeline.hpp"
 #include "PipelineLayout.hpp"
@@ -46,6 +56,7 @@
 
 vks::Frustum frustum;
 const float chunkDim = 241.0f;
+float maxTreeDrawDistance = 150.0f;
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -54,8 +65,9 @@ public:
 	bool debugDisplayRefraction = false;
 	bool displayWaterPlane = true;
 	bool displayWireFrame = false;
-	bool renderShadows = true;
+	bool renderShadows = false;
 	bool renderTrees = true;
+	bool renderGrass = true;
 	bool fixFrustum = false;
 	bool hasExtMemoryBudget = false;
 
@@ -71,12 +83,16 @@ public:
 
 	glm::vec4 lightPos;
 
+	//uint32_t numThreads;
+	//vks::ThreadPool threadPool;
+
 	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
 	enum class FramebufferType { Color, DepthStencil };
 
 	const std::vector<std::string> treeModels = { 
 		"spruce/spruce.gltf", 
-		"pine/pine.gltf", 
+		"spruce_impostor/spruce_impostor.gltf",
+		"pine/pine.gltf",
 		"fir/fir.gltf",
 		"acacia/acacia.gltf",
 		"beech/beech.gltf",
@@ -88,7 +104,10 @@ public:
 
 	const std::vector<std::string> presets = {
 		"default",
-		"flat"
+		"flat",
+		"impostors",
+		"grasstest",
+		"extreme"
 	};
 	int32_t presetIndex = 0;
 
@@ -106,6 +125,7 @@ public:
 		Pipeline* water;
 		Pipeline* waterOffscreen;
 		Pipeline* terrain;
+		Pipeline* terrainBlend;
 		Pipeline* terrainOffscreen;
 		Pipeline* sky;
 		Pipeline* skyOffscreen;
@@ -114,6 +134,8 @@ public:
 		Pipeline* wireframe;
 		Pipeline* tree;
 		Pipeline* treeOffscreen;
+		Pipeline* grass;
+		Pipeline* grassOffscreen;
 	} pipelines;
 
 	struct Textures {
@@ -130,6 +152,7 @@ public:
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
 		std::vector<vkglTF::Model> trees;
+		vkglTF::Model grass;
 	} models;
 
 	struct {
@@ -156,8 +179,8 @@ public:
 	struct UniformDataParams {
 		uint32_t shadows = 0;
 		uint32_t fog = 1;
-		uint32_t alphaDiscard = 0;
-		uint32_t _pad1;
+		uint32_t alphaDiscard = 0; // @todo
+		uint32_t shadowPCF = 0;
 		glm::vec4 fogColor;
 		glm::vec4 waterColor;
 		glm::vec4 layers[TERRAIN_LAYER_COUNT];
@@ -246,6 +269,220 @@ public:
 	VkFramebuffer cascadesFramebuffer;
 
 	std::mutex lock_guard;
+	bool transferQueueBlocked = false;
+
+	// Dynamic buffers
+	struct DrawBatch {
+		vkglTF::Model* model = nullptr;
+		uint32_t count = 0;
+		vks::Buffer instanceBuffer;
+	};
+	struct DrawBatches {
+		DrawBatch trees;
+		DrawBatch treeImpostors;
+		DrawBatch grass;
+	} drawBatches;
+
+	struct Profiling {
+		double drawBatchUpdate;
+	} profiling;
+
+
+	float gold_noise(glm::vec2 xy, float seed) {
+		const float PHI = 1.61803398874989484820459;
+		float ip;
+		return modf(tan(glm::distance(xy * PHI, xy) * seed) * xy.x, &ip);
+	}
+
+	void updateDrawBatches() {
+		// @todo: store time when object was first displayed for smooth fade in / transition
+
+		auto tStart = std::chrono::high_resolution_clock::now();
+
+		float maxViewFullDist = 128.0f;
+		float maxViewDist = 512.0f;
+		float maxViewDistGrass = 256.0f;
+		float grassFadeDist = maxViewDistGrass - (maxViewDistGrass * 0.25f);
+
+		uint32_t countFull = 0;
+		uint32_t countImpostor = 0;
+		uint32_t countGrass = 0;
+
+		uint32_t idx = 0;
+
+		// Determine number of visible trees
+		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+			if (terrainChunk->visible && terrainChunk->hasValidMesh && terrainChunk->treeInstanceCount > 0) {
+				for (auto& object : terrainChunk->trees) {
+					float d = glm::distance(object.worldpos, camera.position);
+					object.distance = d;
+					if (d < maxViewFullDist) {
+						countFull++;
+					} else {
+						if (d < maxViewDist) {
+							countImpostor++;
+						}
+					}
+				}
+			}
+		}
+
+		InstanceData* idTrees = new InstanceData[countFull];
+		InstanceData* idImpostors = new InstanceData[countImpostor];
+		uint32_t idxFull = 0;
+		uint32_t idxImpostor = 0;
+		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+			if (terrainChunk->visible && terrainChunk->hasValidMesh && terrainChunk->treeInstanceCount > 0) {
+				for (auto& object : terrainChunk->trees) {
+					if (object.distance < maxViewFullDist) {
+						idTrees[idxFull].pos = object.worldpos;
+						idTrees[idxFull].rotation = object.rotation;
+						idTrees[idxFull].scale = object.scale;
+						idxFull++;
+					} else {
+						if (object.distance < maxViewDist) {
+							idImpostors[idxImpostor].pos = object.worldpos;
+							idImpostors[idxImpostor].rotation = object.rotation;
+							// Impostor model is slightly larger than tree, so we need to scale it down a bit
+							idImpostors[idxImpostor].scale = object.scale * 0.65f;
+							idxImpostor++;
+						}
+					}
+				}
+			}
+		}
+
+		// Generate grass layer around player
+
+		int dim = heightMapSettings.grassDim;
+		float scale = heightMapSettings.grassScale;
+		float hdim = (float)dim * scale / 2.0f;
+		float adim = (float)dim * scale;
+		float fdim = adim * 0.75f;
+		uint32_t idx = 0;
+		countGrass = dim * dim;
+		InstanceData* idGrass = new InstanceData[countGrass];
+		glm::vec3 camFront = camera.frontVector();
+		glm::vec3 center = camera.position + camFront * hdim;
+		for (int x = -dim/2; x < dim/2; x++) {
+			for (int y = -dim/2; y < dim / 2; y++) {
+				glm::vec3 worldPos = glm::vec3(round(center.x) + x * scale, 0.0f, round(center.z) + y * scale);
+				if (!frustum.checkSphere(worldPos, 10.0f)) {
+					idGrass[idx].scale = glm::vec3(0.0f);
+					continue;
+				}
+				// @todo: store random number for each terrain chunk pos at chunk generation and use that instead of calculating
+				float rndA = gold_noise(glm::vec2(worldPos.x, worldPos.z), worldPos.x + worldPos.z * (float)dim);
+				worldPos.x += rndA;
+				worldPos.z -= rndA;
+				//TerrainChunk* chunk = infiniteTerrain.getChunkFromWorldPos(worldPos);
+				idGrass[idx].scale = glm::vec3(1.0f, 0.75f, 1.0f);
+				idGrass[idx].rotation = glm::vec3(M_PI * rndA * 0.035f, M_PI * rndA * 2.0f, M_PI * rndA * -0.035f);
+				idGrass[idx].uv = glm::vec2((float)((int)(round(rndA * 4.0f)) % 4) * 0.25f, 0.0f);
+				idGrass[idx].pos = worldPos;
+				idGrass[idx].color = glm::vec4(1.0f);
+				float d = glm::distance(worldPos, camera.position);
+				idGrass[idx].color.a = 1.0f;
+				if (d > fdim) {
+					const float farea = adim - fdim;
+					const float alpha = ((adim - d) / farea);
+					idGrass[idx].color.a = alpha;
+				}
+				float h = 0.0f;
+				infiniteTerrain.getHeight(worldPos, h);
+				if ((abs(h) <= heightMapSettings.waterPosition) || (abs(h) > 12.0f)) {
+					continue;
+				}
+				idGrass[idx].pos.y = h;
+				idx++;
+			}
+		}
+
+		int countGrassActual = idx - 1;
+
+		// @todo: lambda or fn for draw batch setup instead of duplicating code, simply pass vector with object data
+
+		// Trees at full detail
+		if ((countFull > 0) && ((countFull > drawBatches.trees.count) || (drawBatches.trees.instanceBuffer.buffer == VK_NULL_HANDLE))) {
+			VkDeviceSize bufferSize = countFull * sizeof(InstanceData);
+			drawBatches.trees.instanceBuffer.destroy();
+			// Create device local / host accessible buffer (@todo: check mem consumption and if it works elsewhere)
+			VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &drawBatches.trees.instanceBuffer, bufferSize));
+			drawBatches.trees.instanceBuffer.map();	
+		}
+		drawBatches.trees.model = &models.trees[0];
+		drawBatches.trees.count = countFull;
+		if ((countFull > 0) && (drawBatches.trees.instanceBuffer.buffer != VK_NULL_HANDLE)) {
+			VkDeviceSize bufferSize = countFull * sizeof(InstanceData);
+			memcpy(drawBatches.trees.instanceBuffer.mapped, idTrees, bufferSize);
+			VkMappedMemoryRange memRange = vks::initializers::mappedMemoryRange();
+			memRange.memory = drawBatches.trees.instanceBuffer.memory;
+			memRange.size = VK_WHOLE_SIZE;
+			vkFlushMappedMemoryRanges(device, 1, &memRange);
+			delete[] idTrees;
+		}
+
+		// Tree impostors
+		DrawBatch* drawBatch = &drawBatches.treeImpostors;
+		if ((countImpostor > 0) && ((countImpostor > drawBatch->count) || (drawBatch->instanceBuffer.buffer == VK_NULL_HANDLE))) {
+			VkDeviceSize bufferSize = countImpostor * sizeof(InstanceData);
+			drawBatch->instanceBuffer.destroy();
+			// Create device local / host accessible buffer (@todo: check mem consumption and if it works elsewhere)
+			VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &drawBatch->instanceBuffer, bufferSize));
+			drawBatch->instanceBuffer.map();
+		}
+		drawBatch->model = &models.trees[1];
+		drawBatch->count = countImpostor;
+		if ((countImpostor > 0) && (drawBatch->instanceBuffer.buffer != VK_NULL_HANDLE)) {
+			VkDeviceSize bufferSize = countImpostor * sizeof(InstanceData);
+			memcpy(drawBatch->instanceBuffer.mapped, idImpostors, bufferSize);
+			VkMappedMemoryRange memRange = vks::initializers::mappedMemoryRange();
+			memRange.memory = drawBatch->instanceBuffer.memory;
+			memRange.size = VK_WHOLE_SIZE;
+			vkFlushMappedMemoryRanges(device, 1, &memRange);
+			delete[] idImpostors;
+		}
+
+		// Dynamic grass layer
+		// Tree impostors
+		drawBatch = &drawBatches.grass;
+		if ((countGrassActual > 0) && ((countGrassActual > drawBatch->count) || (drawBatch->instanceBuffer.buffer == VK_NULL_HANDLE))) {
+			VkDeviceSize bufferSize = countGrassActual * sizeof(InstanceData);
+			drawBatch->instanceBuffer.destroy();
+			// Create device local / host accessible buffer (@todo: check mem consumption and if it works elsewhere)
+			VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &drawBatch->instanceBuffer, bufferSize));
+			drawBatch->instanceBuffer.map();
+		}
+		drawBatch->model = &models.grass;
+		drawBatch->count = countGrassActual;
+		if ((countGrassActual > 0) && (drawBatch->instanceBuffer.buffer != VK_NULL_HANDLE)) {
+			VkDeviceSize bufferSize = countGrassActual * sizeof(InstanceData);
+			memcpy(drawBatch->instanceBuffer.mapped, idGrass, bufferSize);
+			VkMappedMemoryRange memRange = vks::initializers::mappedMemoryRange();
+			memRange.memory = drawBatch->instanceBuffer.memory;
+			memRange.size = VK_WHOLE_SIZE;
+			vkFlushMappedMemoryRanges(device, 1, &memRange);
+			delete[] idGrass;
+		}
+
+		auto tEnd = std::chrono::high_resolution_clock::now();
+		profiling.drawBatchUpdate = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+	}
+
+	void updateTerrainChunkThreadFn(TerrainChunk* chunk) {
+		std::lock_guard<std::mutex> guard(lock_guard);
+		heightMapSettings.offset.x = (float)chunk->position.x * (float)(chunk->size);
+		heightMapSettings.offset.y = (float)chunk->position.y * (float)(chunk->size);
+		while (transferQueueBlocked) {};
+		transferQueueBlocked = true;
+		chunk->updateHeightMap();
+		chunk->updateTrees();
+		chunk->min.y = chunk->heightMap->minHeight;
+		chunk->max.y = chunk->heightMap->maxHeight;
+		chunk->hasValidMesh = true;
+		transferQueueBlocked = false;
+		//std::terminate();
+	}
 
 	void terrainUpdateThreadFn() {
 		while (true) {
@@ -279,6 +516,13 @@ public:
 
 		camera.setPosition(glm::vec3(0.0f, -25.0f, 0.0f));
 
+		//camera.setPosition(glm::vec3(240.0f, -25.0f, 0.0f));
+		//camera.setPosition(glm::vec3(240.0f, -25.0f, 240.0f));
+
+		// @todo
+		camera.setPosition(glm::vec3(1678.54f, -11.8125f, -660.64));
+		camera.rotate(-76.25f, 0.5f);
+
 		camera.update(0.0f);
 		frustum.update(camera.matrices.perspective * camera.matrices.view);
 
@@ -290,18 +534,20 @@ public:
 		enabledFeatures11.multiview = VK_TRUE;
 
 		// Spawn background thread that creates newly visible terrain chunkgs
-		std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
-		backgroundLoadingThread.detach();
+		//std::thread backgroundLoadingThread(&VulkanExample::terrainUpdateThreadFn, this);
+		//backgroundLoadingThread.detach();
 
 		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-		heightMapSettings.loadFromFile(getAssetPath() + "presets/default.txt");
+		heightMapSettings.loadFromFile(getAssetPath() + "presets/flat.txt");
 		memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 
 #if defined(_WIN32)
 		//ShowCursor(false);
 #endif
+
+		//numThreads = std::thread::hardware_concurrency();
 	}
 
 	~VulkanExample()
@@ -478,7 +724,8 @@ public:
 		struct PushConst {
 			glm::mat4 scale = glm::mat4(1.0f);
 			glm::vec4 clipPlane = glm::vec4(0.0f);
-			uint32_t shadows = 1;
+			uint32_t shadows = 0;
+			float alpha = 1.0f;
 		} pushConst;
 		pushConst.shadows = renderShadows ? 1 : 0;
 
@@ -500,12 +747,15 @@ public:
 		bool offscreen = drawType != SceneDrawType::sceneDrawTypeDisplay;
 
 		// Skysphere
+		vkCmdSetCullMode(cb->handle, drawType == SceneDrawType::sceneDrawTypeReflect ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT);
+		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
 		cb->bindPipeline(offscreen ? pipelines.skyOffscreen : pipelines.sky);
 		cb->bindDescriptorSets(pipelineLayouts.sky, { descriptorSets.skysphere }, 0);
 		cb->updatePushConstant(pipelineLayouts.sky, 0, &pushConst);
 		models.skysphere.draw(cb->handle);
 
 		// Terrain
+		// @todo: rework pipeline binding
 		if (displayWireFrame) {
 			cb->bindPipeline(pipelines.wireframe);
 		} else {
@@ -513,12 +763,16 @@ public:
 		}
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.terrain }, 0);
 		cb->bindDescriptorSets(pipelineLayouts.terrain, { descriptorSets.sceneParams }, 1);
-		cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+				pushConst.alpha = terrainChunk->alpha;
+				if (terrainChunk->alpha < 1.0f) {
+					cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrainBlend);
+				} else {
+					cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
+				}
+				cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
 				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
-				//pos.x = 0.0f;
-				//pos.y = 0.0f;
 				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
 					pos.y += heightMapSettings.waterPosition * 2.0f;
 					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_BACK_BIT);
@@ -538,6 +792,8 @@ public:
 			cb->bindPipeline(offscreen ? pipelines.waterOffscreen : pipelines.water);
 			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
 				if (terrainChunk->visible && terrainChunk->hasValidMesh) {
+					pushConst.alpha = terrainChunk->alpha;
+					cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
 					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, -heightMapSettings.waterPosition, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 1.0f, chunkDim - 1.0f);
 					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
 					models.plane.draw(cb->handle);
@@ -546,32 +802,78 @@ public:
 		}
 
 		// Trees
-		if (renderTrees) {
+		if ((renderTrees) && (drawType != SceneDrawType::sceneDrawTypeRefract) && (drawBatches.trees.instanceBuffer.buffer != VK_NULL_HANDLE)) {
 			vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
-			if (drawType != SceneDrawType::sceneDrawTypeRefract) {
-				for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-					if (terrainChunk->visible && terrainChunk->hasValidMesh) {
-						pushConst.alpha = terrainChunk->alpha;
-						cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
-						VkDeviceSize offsets[1] = { 0 };
-						vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
-						// @todo: offset pos by waterplane? also needed for terrain?
-						cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
-						cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
-						// Set 1 is bound in the glTF model renderer
-						cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneParams }, 2);
-						cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.shadowCascades }, 3);
-						glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
-						if (drawType == SceneDrawType::sceneDrawTypeReflect) {
-							pos.y += heightMapSettings.waterPosition * 2.0f;
-						}
-						cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
-						vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-						models.trees[heightMapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, pipelineLayouts.tree->handle, 1, terrainChunk->treeInstanceCount);
+			const VkDeviceSize offsets[1] = { 0 };
+
+			std::vector<DrawBatch*> batches = { &drawBatches.trees, &drawBatches.treeImpostors };
+			for (auto& drawBatch : batches) {
+				vkCmdBindVertexBuffers(cb->handle, 0, 1, &drawBatch->model->vertices.buffer, offsets);
+				vkCmdBindIndexBuffer(cb->handle, drawBatch->model->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+				vkCmdBindVertexBuffers(cb->handle, 1, 1, &drawBatch->instanceBuffer.buffer, offsets);
+
+				pushConst.alpha = 1.0f;
+				cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+
+				cb->bindPipeline(offscreen ? pipelines.treeOffscreen : pipelines.tree);
+				cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
+				cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneParams }, 2);
+				cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.shadowCascades }, 3);
+
+				glm::vec3 pos = glm::vec3(0.0f);// glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y)* glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
+					pos.y += heightMapSettings.waterPosition * 2.0f;
+				}
+				//cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+
+				for (auto& node : drawBatch->model->linearNodes) {
+					if (node->mesh) {
+						vkglTF::Primitive* primitive = node->mesh->primitives[0];
+						vkCmdBindDescriptorSets(cb->handle, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.tree->handle, 1, 1, &primitive->material.descriptorSet, 0, nullptr);
+						vkCmdDrawIndexed(cb->handle, primitive->indexCount, drawBatch->count, primitive->firstIndex, 0, 0);
 					}
 				}
 			}
 		}
+
+		// Grass
+		if (renderGrass && (drawBatches.grass.instanceBuffer.buffer != VK_NULL_HANDLE)) {
+			vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
+			const VkDeviceSize offsets[1] = { 0 };
+
+			std::vector<DrawBatch*> batches = { &drawBatches.grass };
+			for (auto& drawBatch : batches) {
+				vkCmdBindVertexBuffers(cb->handle, 0, 1, &drawBatch->model->vertices.buffer, offsets);
+				vkCmdBindIndexBuffer(cb->handle, drawBatch->model->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+				vkCmdBindVertexBuffers(cb->handle, 1, 1, &drawBatch->instanceBuffer.buffer, offsets);
+
+				pushConst.alpha = 1.0f;
+				cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+
+				cb->bindPipeline(offscreen ? pipelines.grassOffscreen : pipelines.grass);
+				cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneMatrices }, 0);
+				cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.sceneParams }, 2);
+				cb->bindDescriptorSets(pipelineLayouts.tree, { descriptorSets.shadowCascades }, 3);
+
+				glm::vec3 pos = glm::vec3(0.0f);// glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y)* glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
+					pos.y += heightMapSettings.waterPosition * 2.0f;
+				}
+				//cb->updatePushConstant(pipelineLayouts.tree, 0, &pushConst);
+				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+
+				for (auto& node : drawBatch->model->linearNodes) {
+					if (node->mesh) {
+						vkglTF::Primitive* primitive = node->mesh->primitives[0];
+						vkCmdBindDescriptorSets(cb->handle, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.tree->handle, 1, 1, &primitive->material.descriptorSet, 0, nullptr);
+						vkCmdDrawIndexed(cb->handle, primitive->indexCount, drawBatch->count, primitive->firstIndex, 0, 0);
+					}
+				}
+			}
+		}
+
+		vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
 	}
 
 	void drawShadowCasters(CommandBuffer* cb) {
@@ -585,27 +887,27 @@ public:
 		// Terrain
 		// @todo: limit distance
 		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			//if (terrainChunk->visible && terrainChunk->hasValidMesh) {
-			bool chunkVisible = terrainChunk->hasValidMesh && terrainChunk->visible;
-			if (chunkVisible) {
+			if (terrainChunk->visible && terrainChunk->hasValidMesh) {
 				pushConstPos = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
 				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConstPos);
 				terrainChunk->draw(cb);
 			}
 		}
 		// Trees
-		// @todo: limit distance
-		cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
-		cb->bindPipeline(pipelines.depthpassTree);
-		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			bool chunkVisible = terrainChunk->hasValidMesh && terrainChunk->visible;
-			if (chunkVisible) {
-				VkDeviceSize offsets[1] = { 0 };
-				vkCmdBindVertexBuffers(cb->handle, 1, 1, &terrainChunk->instanceBuffer.buffer, offsets);
-				pushConstPos = glm::vec4((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y, 0.0f) * glm::vec4(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f, 0.0f);
-				cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConstPos);
-				models.trees[heightMapSettings.treeModelIndex].draw(cb->handle, vkglTF::RenderFlags::BindImages, depthPass.pipelineLayout->handle, 1, terrainChunk->treeInstanceCount);
-			}
+		if (renderTrees && drawBatches.trees.instanceBuffer.buffer != VK_NULL_HANDLE) {
+
+			vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
+			const VkDeviceSize offsets[1] = { 0 };
+
+			DrawBatch* drawBatch = &drawBatches.trees;
+			cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
+			cb->bindPipeline(pipelines.depthpassTree);
+			vkCmdBindVertexBuffers(cb->handle, 1, 1, &drawBatch->instanceBuffer.buffer, offsets);
+			pushConstPos = glm::vec4(0.0f);
+			cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConstPos);
+			drawBatch->model->draw(cb->handle, vkglTF::RenderFlags::BindImages, depthPass.pipelineLayout->handle, 1, drawBatch->count);
+
+			// @todo: impostors?
 		}
 	}
 
@@ -755,7 +1057,7 @@ public:
 		framebufferInfo.layers = 1;
 		VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cascadesFramebuffer));
 
-		// Shared sampler for cascade deoth reads
+		// Shared sampler for cascade depth reads
 		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
 		sampler.magFilter = VK_FILTER_LINEAR;
 		sampler.minFilter = VK_FILTER_LINEAR;
@@ -768,6 +1070,9 @@ public:
 		sampler.minLod = 0.0f;
 		sampler.maxLod = 1.0f;
 		sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+		// @todo
+		//sampler.compareEnable = VK_TRUE;
+		//sampler.compareOp = VK_COMPARE_OP_LESS;
 		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &depth.sampler));
 	}
 
@@ -896,12 +1201,14 @@ public:
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
+		models.grass.loadFromFile(getAssetPath() + "scenes/grasspatch_medium.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
 		models.trees.resize(treeModels.size());
 		for (size_t i = 0; i < treeModels.size(); i++) {
 			models.trees[i].loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[i], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
 		}
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere2.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		//loadTerrainSet("grid");
 		loadTerrainSet("default");
 
 		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
@@ -939,7 +1246,21 @@ public:
 
 	void updateHeightmap(bool firstRun)
 	{
-		infiniteTerrain.updateChunks();
+		//infiniteTerrain.updateChunks();
+		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
+		infiniteTerrain.updateVisibleChunks(frustum);
+		infiniteTerrain.update(frameTimer);
+		//infiniteTerrain.updateChunks(); @todo
+		if (infiniteTerrain.terrainChunkgsUpdateList.size() > 0) {
+			//vks::ThreadPool threadPool;
+			//threadPool.setThreadCount(numThreads);			
+			for (size_t i = 0; i < infiniteTerrain.terrainChunkgsUpdateList.size(); i++) {
+				//threadPool.threads[i % numThreads]->addJob([=] { updateTerrainChunkThreadFn(infiniteTerrain.terrainChunkgsUpdateList[i]); });
+				std::thread chunkThread(&VulkanExample::updateTerrainChunkThreadFn, this, infiniteTerrain.terrainChunkgsUpdateList[i]);
+				chunkThread.detach();
+			}
+			infiniteTerrain.terrainChunkgsUpdateList.clear();
+		}
 		// @todo
 		// terrainChunk->updateHeightMap();
 	}
@@ -1129,7 +1450,7 @@ public:
 		descriptorSets.shadowCascades->create();
 	}
 
-	void preparePipelines()
+	void createPipelines()
 	{
 		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = vks::initializers::pipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, VK_FALSE);
 		VkPipelineRasterizationStateCreateInfo rasterizationState = vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_FRONT_BIT, VK_FRONT_FACE_CLOCKWISE, 0);
@@ -1138,8 +1459,12 @@ public:
 		VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE,VK_COMPARE_OP_LESS_OR_EQUAL);
 		VkPipelineViewportStateCreateInfo viewportState = vks::initializers::pipelineViewportStateCreateInfo(1, 1, 0);
 		VkPipelineMultisampleStateCreateInfo multisampleState = vks::initializers::pipelineMultisampleStateCreateInfo(VK_SAMPLE_COUNT_1_BIT, 0);
-		std::vector<VkDynamicState> dynamicStateEnables = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE };
+		std::vector<VkDynamicState> dynamicStateEnables = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_BLEND_CONSTANTS };
 		VkPipelineDynamicStateCreateInfo dynamicState = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStateEnables);
+
+		if (settings.multiSampling) {
+			multisampleState.rasterizationSamples = settings.sampleCount;
+		}
 
 		// Vertex bindings and attributes
 		// Terrain / shared
@@ -1181,6 +1506,8 @@ public:
 			vks::initializers::vertexInputAttributeDescription(1, 3, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos)),
 			vks::initializers::vertexInputAttributeDescription(1, 4, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, scale)),
 			vks::initializers::vertexInputAttributeDescription(1, 5, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, rotation)),
+			vks::initializers::vertexInputAttributeDescription(1, 6, VK_FORMAT_R32G32_SFLOAT, offsetof(InstanceData, uv)),
+			vks::initializers::vertexInputAttributeDescription(1, 7, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(InstanceData, color)),
 		};
 		vertexInputStateModelInstanced.pVertexBindingDescriptions = bindingDescriptions.data();
 		vertexInputStateModelInstanced.pVertexAttributeDescriptions = attributeDescriptions.data();
@@ -1231,6 +1558,7 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelines.water = new Pipeline(device);
 		pipelines.water->setCreateInfo(pipelineCI);
+		pipelines.water->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
 		pipelines.water->setVertexInputState(vertexInputStateModel);
 		pipelines.water->setCache(pipelineCache);
 		pipelines.water->setLayout(pipelineLayouts.textured);
@@ -1241,6 +1569,7 @@ public:
 		// Offscreen
 		pipelines.waterOffscreen = new Pipeline(device);
 		pipelines.waterOffscreen->setCreateInfo(pipelineCI);
+		pipelines.waterOffscreen->setSampleCount(VK_SAMPLE_COUNT_1_BIT);
 		pipelines.waterOffscreen->setVertexInputState(vertexInputStateModel);
 		pipelines.waterOffscreen->setCache(pipelineCache);
 		pipelines.waterOffscreen->setLayout(pipelineLayouts.textured);
@@ -1254,6 +1583,7 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		pipelines.terrain = new Pipeline(device);
 		pipelines.terrain->setCreateInfo(pipelineCI);
+		pipelines.terrain->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
 		pipelines.terrain->setVertexInputState(&vertexInputState);
 		pipelines.terrain->setCache(pipelineCache);
 		pipelines.terrain->setLayout(pipelineLayouts.terrain);
@@ -1261,10 +1591,34 @@ public:
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.vert.spv");
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.frag.spv");
 		pipelines.terrain->create();
+
+		blendAttachmentState.blendEnable = VK_TRUE;
+		blendAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		blendAttachmentState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+		blendAttachmentState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		blendAttachmentState.colorBlendOp = VK_BLEND_OP_ADD;
+		blendAttachmentState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		blendAttachmentState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		blendAttachmentState.alphaBlendOp = VK_BLEND_OP_ADD;
+
+		pipelines.terrainBlend = new Pipeline(device);
+		pipelines.terrainBlend->setCreateInfo(pipelineCI);
+		pipelines.terrainBlend->setVertexInputState(&vertexInputState);
+		pipelines.terrainBlend->setCache(pipelineCache);
+		pipelines.terrainBlend->setLayout(pipelineLayouts.terrain);
+		pipelines.terrainBlend->setRenderPass(renderPass);
+		pipelines.terrainBlend->addShader(getAssetPath() + "shaders/terrain.vert.spv");
+		pipelines.terrainBlend->addShader(getAssetPath() + "shaders/terrain.frag.spv");
+		pipelines.terrainBlend->create();
+
+		blendAttachmentState.blendEnable = VK_FALSE;
+
 		// Offscreen
+		multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 		//rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 		pipelines.terrainOffscreen = new Pipeline(device);
 		pipelines.terrainOffscreen->setCreateInfo(pipelineCI);
+		pipelines.terrainOffscreen->setSampleCount(VK_SAMPLE_COUNT_1_BIT);
 		pipelines.terrainOffscreen->setVertexInputState(&vertexInputState);
 		pipelines.terrainOffscreen->setCache(pipelineCache);
 		pipelines.terrainOffscreen->setLayout(pipelineLayouts.terrain);
@@ -1276,6 +1630,7 @@ public:
 		rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
 		pipelines.wireframe = new Pipeline(device);
 		pipelines.wireframe->setCreateInfo(pipelineCI);
+		pipelines.wireframe->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
 		pipelines.wireframe->setVertexInputState(&vertexInputState);
 		pipelines.wireframe->setCache(pipelineCache);
 		pipelines.wireframe->setLayout(pipelineLayouts.terrain);
@@ -1290,6 +1645,7 @@ public:
 		depthStencilState.depthWriteEnable = VK_FALSE;
 		pipelines.sky = new Pipeline(device);
 		pipelines.sky->setCreateInfo(pipelineCI);
+		pipelines.sky->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
 		pipelines.sky->setVertexInputState(vertexInputStateModel);
 		pipelines.sky->setCache(pipelineCache);
 		pipelines.sky->setLayout(pipelineLayouts.sky);
@@ -1298,8 +1654,10 @@ public:
 		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
 		pipelines.sky->create();
 		// Offscreen
+		multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 		pipelines.skyOffscreen = new Pipeline(device);
 		pipelines.skyOffscreen->setCreateInfo(pipelineCI);
+		pipelines.skyOffscreen->setSampleCount(VK_SAMPLE_COUNT_1_BIT);
 		pipelines.skyOffscreen->setVertexInputState(vertexInputStateModel);
 		pipelines.skyOffscreen->setCache(pipelineCache);
 		pipelines.skyOffscreen->setLayout(pipelineLayouts.sky);
@@ -1313,8 +1671,7 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthWriteEnable = VK_TRUE;
 
-		// @todo: not sure: blend or discard
-		blendAttachmentState.blendEnable = VK_TRUE;
+		blendAttachmentState.blendEnable = VK_FALSE;
 		blendAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 		blendAttachmentState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
 		blendAttachmentState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -1325,6 +1682,7 @@ public:
 
 		pipelines.tree = new Pipeline(device);
 		pipelines.tree->setCreateInfo(pipelineCI);
+		pipelines.tree->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
 		pipelines.tree->setVertexInputState(&vertexInputStateModelInstanced);
 		pipelines.tree->setCache(pipelineCache);
 		pipelines.tree->setLayout(pipelineLayouts.tree);
@@ -1335,6 +1693,7 @@ public:
 		// Offscreen
 		pipelines.treeOffscreen = new Pipeline(device);
 		pipelines.treeOffscreen->setCreateInfo(pipelineCI);
+		pipelines.treeOffscreen->setSampleCount(VK_SAMPLE_COUNT_1_BIT);
 		pipelines.treeOffscreen->setVertexInputState(&vertexInputStateModelInstanced);
 		pipelines.treeOffscreen->setCache(pipelineCache);
 		pipelines.treeOffscreen->setLayout(pipelineLayouts.tree);
@@ -1342,6 +1701,30 @@ public:
 		pipelines.treeOffscreen->addShader(getAssetPath() + "shaders/tree.vert.spv");
 		pipelines.treeOffscreen->addShader(getAssetPath() + "shaders/tree.frag.spv");
 		pipelines.treeOffscreen->create();
+
+		// Grass
+		pipelines.grass = new Pipeline(device);
+		pipelines.grass->setCreateInfo(pipelineCI);
+		pipelines.sky->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
+
+		pipelines.grass->setVertexInputState(&vertexInputStateModelInstanced);
+		pipelines.grass->setCache(pipelineCache);
+		pipelines.grass->setLayout(pipelineLayouts.tree);
+		pipelines.grass->setRenderPass(renderPass);
+		pipelines.grass->addShader(getAssetPath() + "shaders/grass.vert.spv");
+		pipelines.grass->addShader(getAssetPath() + "shaders/grass.frag.spv");
+		pipelines.grass->create();
+		// Offscreen
+		pipelines.grassOffscreen = new Pipeline(device);
+		pipelines.grassOffscreen->setCreateInfo(pipelineCI);
+		pipelines.grassOffscreen->setSampleCount(VK_SAMPLE_COUNT_1_BIT);
+		pipelines.grassOffscreen->setVertexInputState(&vertexInputStateModelInstanced);
+		pipelines.grassOffscreen->setCache(pipelineCache);
+		pipelines.grassOffscreen->setLayout(pipelineLayouts.tree);
+		pipelines.grassOffscreen->setRenderPass(offscreenPass.renderPass);
+		pipelines.grassOffscreen->addShader(getAssetPath() + "shaders/grass.vert.spv");
+		pipelines.grassOffscreen->addShader(getAssetPath() + "shaders/grass.frag.spv");
+		pipelines.grassOffscreen->create();
 
 		depthStencilState.depthWriteEnable = VK_TRUE;
 		blendAttachmentState.blendEnable = VK_FALSE;
@@ -1406,11 +1789,12 @@ public:
 		lightPos = glm::vec4(-20.0f, -15.0f, 20.0f, 0.0f) * radius;
 		// @todo
 		lightPos = glm::vec4(20.0f, -10.0f, 20.0f, 0.0f);
-		lightPos = glm::vec4(-48.0f, -40.0f, 46.0f, 0.0f);
+		
+		lightPos = glm::vec4(-48.0f, -80.0f, 46.0f, 0.0f);
 
 		//float angle = glm::radians(timer * 360.0f);
 		//lightPos = glm::vec4(cos(angle) * radius, -15.0f, sin(angle) * radius, 0.0f);
-
+		
 		uboShared.lightDir = glm::normalize(-lightPos);
 		uboShared.projection = camera.matrices.perspective;
 		uboShared.model = camera.matrices.view;
@@ -1460,13 +1844,14 @@ public:
 		prepareCSM();
 		prepareUniformBuffers();
 		setupDescriptorSetLayout();
-		preparePipelines();
+		createPipelines();
 		setupDescriptorPool();
 		setupDescriptorSet();
 		
 		// @todo
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
 		infiniteTerrain.updateVisibleChunks(frustum);
+		//updateHeightmap(false);
 		
 		prepared = true;
 	}
@@ -1560,6 +1945,7 @@ public:
 
 		VulkanExampleBase::prepareFrame();
 
+		updateHeightmap(false);
 		buildCommandBuffer(currentBuffer);
 
 		submitInfo.commandBufferCount = 1;
@@ -1577,15 +1963,29 @@ public:
 			updateUniformBuffers();
 		}
 		updateMemoryBudgets();
+		updateDrawBatches();
+
+		vkQueueWaitIdle(VulkanContext::graphicsQueue);
+
+		// infiniteTerrain.update(frameTimer);
 	}
 
 	virtual void viewChanged()
 	{
+		// @todo
+		float h;
+		float b = infiniteTerrain.getHeight(camera.position, h);
+		if (b) {
+			//camera.position.y = h;
+		}
+
+
 		updateUniformBuffers();
 		// @todo
 		if (!fixFrustum) {
 			frustum.update(camera.matrices.perspective * camera.matrices.view);
 		}
+		// @todo
 		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
 		infiniteTerrain.updateVisibleChunks(frustum);
 	}
@@ -1607,6 +2007,7 @@ public:
 				ImGui::Text("Heap %i: %.2f / %.2f", i, (float)memoryBudget.heapUsage[i] / divisor, (float)memoryBudget.heapBudget[i] / divisor);
 			}
 		}
+		ImGui::Text("Draw batch update: %.2f ms", profiling.drawBatchUpdate);
 		ImGui::End();
 
 		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiSetCond_FirstUseEver);
@@ -1632,7 +2033,10 @@ public:
 		ImGui::Begin("Terrain", nullptr, ImGuiWindowFlags_None);
 		overlay->text("%d chunks in memory", infiniteTerrain.terrainChunks.size());
 		overlay->text("%d chunks visible", infiniteTerrain.getVisibleChunkCount());
-		overlay->text("%d trees visible", infiniteTerrain.getVisibleTreeCount());
+		//overlay->text("%d trees visible", infiniteTerrain.getVisibleTreeCount());
+		overlay->text("%d trees visible (full)", drawBatches.trees.count);
+		overlay->text("%d trees visible (impostor)", drawBatches.treeImpostors.count);
+		overlay->text("%d grass patches visible", drawBatches.grass.count);
 		int currentChunkCoordX = round((float)infiniteTerrain.viewerPosition.x / (float)(heightMapSettings.mapChunkSize - 1));
 		int currentChunkCoordY = round((float)infiniteTerrain.viewerPosition.y / (float)(heightMapSettings.mapChunkSize - 1));
 		overlay->text("chunk coord x = %d / y =%d", currentChunkCoordX, currentChunkCoordY);
@@ -1646,6 +2050,7 @@ public:
 		updateParamsReq |= overlay->checkBox("Fog", &uniformDataParams.fog);
 		updateParamsReq |= overlay->checkBox("Shadows", &renderShadows);
 		overlay->checkBox("Trees", &renderTrees);
+		overlay->checkBox("Grass", &renderGrass);
 		updateParamsReq |= overlay->checkBox("Alpha discard", &uniformDataParams.alphaDiscard);
 		if (overlay->sliderFloat("Chunk draw distance", &heightMapSettings.maxChunkDrawDistance, 0.0f, 1024.0f)) {
 			infiniteTerrain.updateViewDistance(heightMapSettings.maxChunkDrawDistance);
@@ -1674,6 +2079,7 @@ public:
 
 		overlay->comboBox("Tree type", &heightMapSettings.treeModelIndex, treeModels);
 		overlay->sliderInt("Tree density", &heightMapSettings.treeDensity, 1, 64);
+		overlay->sliderInt("Grass density", &heightMapSettings.grassDensity, 1, 512);
 		overlay->sliderFloat("Min. tree size", &heightMapSettings.minTreeSize, 0.1f, heightMapSettings.maxTreeSize);
 		overlay->sliderFloat("Max. tree size", &heightMapSettings.maxTreeSize, heightMapSettings.minTreeSize, 5.0f);
 		//overlay->sliderInt("LOD", &heightMapSettings.levelOfDetail, 1, 6);
@@ -1692,6 +2098,13 @@ public:
 			uniformDataParams.waterColor.g = heightMapSettings.waterColor[1];
 			uniformDataParams.waterColor.b = heightMapSettings.waterColor[2];
 		}
+		ImGui::End();
+
+		ImGui::SetNextWindowPos(ImVec2(70, 70), ImGuiSetCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
+		ImGui::Begin("Grass layer settings", nullptr, ImGuiWindowFlags_None);
+		overlay->sliderInt("Patch dimension", &heightMapSettings.grassDim, 1, 512);
+		overlay->sliderFloat("Patch scale", &heightMapSettings.grassScale, 0.25f, 2.5f);
 		ImGui::End();
 
 		if (updateParamsReq) {

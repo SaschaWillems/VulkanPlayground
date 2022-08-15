@@ -72,6 +72,18 @@ private:
 	// Called if the window is resized and some resources have to be recreatesd
 	void windowResize();
 	void handleMouseMove(int32_t x, int32_t y);
+	struct MultisampleTarget {
+		struct {
+			VkImage image;
+			VkImageView view;
+			VkDeviceMemory memory;
+		} color;
+		struct {
+			VkImage image;
+			VkImageView view;
+			VkDeviceMemory memory;
+		} depth;
+	} multisampleTarget;
 protected:
 	// Frame counter to display fps
 	uint32_t frameCounter = 0;
@@ -89,6 +101,7 @@ protected:
 	VkPhysicalDeviceMemoryProperties deviceMemoryProperties;
 	/** @brief Set of physical device features to be enabled for this example (must be set in the derived constructor) */
 	VkPhysicalDeviceFeatures enabledFeatures{};
+	VkPhysicalDeviceVulkan11Features enabledFeatures11{};
 	/** @brief Set of device extensions to be enabled for this example (must be set in the derived constructor) */
 	std::vector<const char*> enabledDeviceExtensions;
 	std::vector<const char*> enabledInstanceExtensions;
@@ -145,14 +158,12 @@ public:
 
 	/** @brief Example settings that can be changed e.g. by command line arguments */
 	struct Settings {
-		/** @brief Activates validation layers (and message output) when set to true */
 		bool validation = false;
-		/** @brief Set to true if fullscreen mode has been requested via command line */
 		bool fullscreen = false;
-		/** @brief Set to true if v-sync will be forced for the swapchain */
 		bool vsync = false;
-		/** @brief Enable UI overlay */
 		bool overlay = false;
+		bool multiSampling = true;
+		VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_4_BIT;
 	} settings;
 
 	VkClearColorValue defaultClearColor = { { 0.025f, 0.025f, 0.025f, 1.0f } };

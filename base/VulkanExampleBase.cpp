@@ -243,7 +243,11 @@ void VulkanExampleBase::renderFrame()
 	auto tEnd = std::chrono::high_resolution_clock::now();
 	auto tDiff = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
 	frameTimer = (float)tDiff / 1000.0f;
-	camera.update(frameTimer);
+	if (GetKeyState(VK_SHIFT) & 0x8000) {
+		camera.update(frameTimer * 2.5f);
+	} else {
+		camera.update(frameTimer);
+	}
 	if (camera.moving())
 	{
 		viewUpdated = true;
@@ -577,6 +581,8 @@ void VulkanExampleBase::updateOverlay()
 	io.MouseDown[0] = mouseButtons.left;
 	io.MouseDown[1] = mouseButtons.right;
 
+	//io.MouseDrawCursor = true;
+
 	ImGui::NewFrame();
 
 	/*ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
@@ -755,12 +761,14 @@ VulkanExampleBase::VulkanExampleBase(bool enableValidation)
 #if defined(_WIN32)
 	// Enable console if validation is active
 	// Debug message callback will output to it
-	if (this->settings.validation)
+	//if (this->settings.validation)
 	{
 		setupConsole("Vulkan validation output");
 	}
 	setupDPIAwareness();
 #endif
+
+	enabledFeatures11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 }
 
 VulkanExampleBase::~VulkanExampleBase()
@@ -783,6 +791,15 @@ VulkanExampleBase::~VulkanExampleBase()
 	vkFreeMemory(device, depthStencil.mem, nullptr);
 
 	vkDestroyPipelineCache(device, pipelineCache, nullptr);
+
+	if (settings.multiSampling) {
+		vkDestroyImage(device, multisampleTarget.color.image, nullptr);
+		vkDestroyImageView(device, multisampleTarget.color.view, nullptr);
+		vkFreeMemory(device, multisampleTarget.color.memory, nullptr);
+		vkDestroyImage(device, multisampleTarget.depth.image, nullptr);
+		vkDestroyImageView(device, multisampleTarget.depth.view, nullptr);
+		vkFreeMemory(device, multisampleTarget.depth.memory, nullptr);
+	}
 
 	vkDestroySemaphore(device, semaphores.presentComplete, nullptr);
 	vkDestroySemaphore(device, semaphores.renderComplete, nullptr);
@@ -934,7 +951,11 @@ bool VulkanExampleBase::initVulkan()
 	// This is handled by a separate class that gets a logical device representation
 	// and encapsulates functions related to a device
 	vulkanDevice = new vks::VulkanDevice(physicalDevice);
-	VkResult res = vulkanDevice->createLogicalDevice(enabledFeatures, enabledDeviceExtensions, deviceCreatepNextChain);
+	VkPhysicalDeviceFeatures2 pdf2{};
+	pdf2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+	pdf2.features = enabledFeatures;
+	pdf2.pNext = &enabledFeatures11;
+	VkResult res = vulkanDevice->createLogicalDevice(pdf2, enabledDeviceExtensions, deviceCreatepNextChain);
 	if (res != VK_SUCCESS) {
 		vks::tools::exitFatal("Could not create Vulkan device: \n" + vks::tools::errorString(res), res);
 		return false;
@@ -2051,95 +2072,305 @@ void VulkanExampleBase::setupDepthStencil()
 
 void VulkanExampleBase::setupFrameBuffer()
 {
-	VkImageView attachments[2];
+	if (settings.multiSampling) {
+		// Check if device supports requested sample count for color and depth frame buffer
+		//assert((deviceProperties.limits.framebufferColorSampleCounts >= sampleCount) && (deviceProperties.limits.framebufferDepthSampleCounts >= sampleCount));
 
-	// Depth/Stencil attachment is the same for all frame buffers
-	attachments[1] = depthStencil.view;
+		VkImageCreateInfo imageCI{};
+		imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		imageCI.imageType = VK_IMAGE_TYPE_2D;
+		imageCI.format = swapChain.colorFormat;
+		imageCI.extent.width = width;
+		imageCI.extent.height = height;
+		imageCI.extent.depth = 1;
+		imageCI.mipLevels = 1;
+		imageCI.arrayLayers = 1;
+		imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+		imageCI.samples = settings.sampleCount;
+		imageCI.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		imageCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		VK_CHECK_RESULT(vkCreateImage(device, &imageCI, nullptr, &multisampleTarget.color.image));
 
-	VkFramebufferCreateInfo frameBufferCreateInfo = {};
-	frameBufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-	frameBufferCreateInfo.pNext = NULL;
-	frameBufferCreateInfo.renderPass = renderPass->handle;
-	frameBufferCreateInfo.attachmentCount = 2;
-	frameBufferCreateInfo.pAttachments = attachments;
-	frameBufferCreateInfo.width = width;
-	frameBufferCreateInfo.height = height;
-	frameBufferCreateInfo.layers = 1;
+		VkMemoryRequirements memReqs;
+		vkGetImageMemoryRequirements(device, multisampleTarget.color.image, &memReqs);
+		VkMemoryAllocateInfo memAllocInfo{};
+		memAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		memAllocInfo.allocationSize = memReqs.size;
+		VkBool32 lazyMemTypePresent;
+		memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, &lazyMemTypePresent);
+		if (!lazyMemTypePresent) {
+			memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		}
+		VK_CHECK_RESULT(vkAllocateMemory(device, &memAllocInfo, nullptr, &multisampleTarget.color.memory));
+		vkBindImageMemory(device, multisampleTarget.color.image, multisampleTarget.color.memory, 0);
+
+		// Create image view for the MSAA target
+		VkImageViewCreateInfo imageViewCI{};
+		imageViewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		imageViewCI.image = multisampleTarget.color.image;
+		imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		imageViewCI.format = swapChain.colorFormat;
+		imageViewCI.components.r = VK_COMPONENT_SWIZZLE_R;
+		imageViewCI.components.g = VK_COMPONENT_SWIZZLE_G;
+		imageViewCI.components.b = VK_COMPONENT_SWIZZLE_B;
+		imageViewCI.components.a = VK_COMPONENT_SWIZZLE_A;
+		imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageViewCI.subresourceRange.levelCount = 1;
+		imageViewCI.subresourceRange.layerCount = 1;
+		VK_CHECK_RESULT(vkCreateImageView(device, &imageViewCI, nullptr, &multisampleTarget.color.view));
+
+		// Depth target
+		imageCI.imageType = VK_IMAGE_TYPE_2D;
+		imageCI.format = depthFormat;
+		imageCI.extent.width = width;
+		imageCI.extent.height = height;
+		imageCI.extent.depth = 1;
+		imageCI.mipLevels = 1;
+		imageCI.arrayLayers = 1;
+		imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+		imageCI.samples = settings.sampleCount;
+		imageCI.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+		imageCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		VK_CHECK_RESULT(vkCreateImage(device, &imageCI, nullptr, &multisampleTarget.depth.image));
+
+		vkGetImageMemoryRequirements(device, multisampleTarget.depth.image, &memReqs);
+		memAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		memAllocInfo.allocationSize = memReqs.size;
+		memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, &lazyMemTypePresent);
+		if (!lazyMemTypePresent) {
+			memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		}
+		VK_CHECK_RESULT(vkAllocateMemory(device, &memAllocInfo, nullptr, &multisampleTarget.depth.memory));
+		vkBindImageMemory(device, multisampleTarget.depth.image, multisampleTarget.depth.memory, 0);
+
+		// Create image view for the MSAA target
+		imageViewCI.image = multisampleTarget.depth.image;
+		imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		imageViewCI.format = depthFormat;
+		imageViewCI.components.r = VK_COMPONENT_SWIZZLE_R;
+		imageViewCI.components.g = VK_COMPONENT_SWIZZLE_G;
+		imageViewCI.components.b = VK_COMPONENT_SWIZZLE_B;
+		imageViewCI.components.a = VK_COMPONENT_SWIZZLE_A;
+		imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+		imageViewCI.subresourceRange.levelCount = 1;
+		imageViewCI.subresourceRange.layerCount = 1;
+		VK_CHECK_RESULT(vkCreateImageView(device, &imageViewCI, nullptr, &multisampleTarget.depth.view));
+	}
+
+	VkImageView attachments[4];
+
+	if (settings.multiSampling) {
+		attachments[0] = multisampleTarget.color.view;
+		attachments[2] = multisampleTarget.depth.view;
+		attachments[3] = depthStencil.view;
+	}
+	else {
+		attachments[1] = depthStencil.view;
+	}
+
+	VkFramebufferCreateInfo frameBufferCI{};
+	frameBufferCI.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+	frameBufferCI.pNext = NULL;
+	frameBufferCI.renderPass = renderPass->handle;
+	frameBufferCI.attachmentCount = settings.multiSampling ? 4 : 2;
+	frameBufferCI.pAttachments = attachments;
+	frameBufferCI.width = width;
+	frameBufferCI.height = height;
+	frameBufferCI.layers = 1;
 
 	// Create frame buffers for every swap chain image
 	frameBuffers.resize(swapChain.imageCount);
-	for (uint32_t i = 0; i < frameBuffers.size(); i++)
-	{
-		attachments[0] = swapChain.buffers[i].view;
-		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCreateInfo, nullptr, &frameBuffers[i]));
+	for (uint32_t i = 0; i < frameBuffers.size(); i++) {
+		if (settings.multiSampling) {
+			attachments[1] = swapChain.buffers[i].view;
+		}
+		else {
+			attachments[0] = swapChain.buffers[i].view;
+		}
+		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &frameBuffers[i]));
 	}
 }
 
 void VulkanExampleBase::setupRenderPass()
 {
-	const VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-	const VkAttachmentReference depthReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
 	renderPass = new RenderPass(device);
 	renderPass->setDimensions(width, height);
-	renderPass->addSubpassDescription({
-		0,
-		VK_PIPELINE_BIND_POINT_GRAPHICS,
-		0,
-		nullptr,
-		1,
-		&colorReference,
-		nullptr,
-		&depthReference,
-		0,
-		nullptr
-	});
-	// Color attachment
-	renderPass->addAttachmentDescription({
-		0,
-		swapChain.colorFormat,
-		VK_SAMPLE_COUNT_1_BIT,
-		VK_ATTACHMENT_LOAD_OP_CLEAR,
-		VK_ATTACHMENT_STORE_OP_STORE,
-		VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-	});
-	// Depth attachment
-	renderPass->addAttachmentDescription({
-		0,
-		depthFormat,
-		VK_SAMPLE_COUNT_1_BIT,
-		VK_ATTACHMENT_LOAD_OP_CLEAR,
-		VK_ATTACHMENT_STORE_OP_STORE,
-		VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-	});
-	// Subpass dependencies
-	renderPass->addSubpassDependency({
-		VK_SUBPASS_EXTERNAL,
-		0,
-		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		VK_ACCESS_MEMORY_READ_BIT,
-		VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-		VK_DEPENDENCY_BY_REGION_BIT,
-	});
-	renderPass->addSubpassDependency({
-		0,
-		VK_SUBPASS_EXTERNAL,
-		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-		VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-		VK_ACCESS_MEMORY_READ_BIT,
-		VK_DEPENDENCY_BY_REGION_BIT,
-	});
-	renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
-	renderPass->setDepthStencilClearValue(1, 1.0f, 0.0f);
-	renderPass->create();
+
+	if (settings.multiSampling) {
+
+		const VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+		const VkAttachmentReference resolveReference = { 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+		const VkAttachmentReference depthReference = { 2, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+
+		/*
+		typedef struct VkSubpassDescription {
+			VkSubpassDescriptionFlags       flags;
+			VkPipelineBindPoint             pipelineBindPoint;
+			uint32_t                        inputAttachmentCount;
+			const VkAttachmentReference* pInputAttachments;
+			uint32_t                        colorAttachmentCount;
+			const VkAttachmentReference* pColorAttachments;
+			const VkAttachmentReference* pResolveAttachments;
+			const VkAttachmentReference* pDepthStencilAttachment;
+			uint32_t                        preserveAttachmentCount;
+			const uint32_t* pPreserveAttachments;
+		} VkSubpassDescription;
+		*/
+
+		renderPass->addSubpassDescription({
+			0,
+			VK_PIPELINE_BIND_POINT_GRAPHICS,
+			0,
+			nullptr,
+			1,
+			&colorReference,
+			& resolveReference,
+			&depthReference,
+			0,
+			nullptr
+			});
+
+		// Multisampled attachment that we render to
+		renderPass->addAttachmentDescription({
+			0,
+			swapChain.colorFormat,
+			settings.sampleCount,
+			VK_ATTACHMENT_LOAD_OP_CLEAR,
+			VK_ATTACHMENT_STORE_OP_STORE,
+			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+			});
+
+		// Color resolve attachment
+		renderPass->addAttachmentDescription({
+			0,
+			swapChain.colorFormat,
+			VK_SAMPLE_COUNT_1_BIT,
+			VK_ATTACHMENT_LOAD_OP_CLEAR,
+			VK_ATTACHMENT_STORE_OP_STORE,
+			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+			});
+
+
+		// Multisampled depth attachment we render to
+		renderPass->addAttachmentDescription({
+			0,
+			depthFormat,
+			settings.sampleCount,
+			VK_ATTACHMENT_LOAD_OP_CLEAR,
+			VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+			});
+
+		// Depth resolve attachment
+		renderPass->addAttachmentDescription({
+			0,
+			depthFormat,
+			VK_SAMPLE_COUNT_1_BIT,
+			VK_ATTACHMENT_LOAD_OP_CLEAR,
+			VK_ATTACHMENT_STORE_OP_STORE,
+			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+			});
+
+		// Subpass dependencies
+		renderPass->addSubpassDependency({
+			VK_SUBPASS_EXTERNAL,
+			0,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_MEMORY_READ_BIT,
+			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_DEPENDENCY_BY_REGION_BIT,
+			});
+		renderPass->addSubpassDependency({
+			0,
+			VK_SUBPASS_EXTERNAL,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_ACCESS_MEMORY_READ_BIT,
+			VK_DEPENDENCY_BY_REGION_BIT,
+			});
+		renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
+		renderPass->setColorClearValue(1, { 0.0f, 0.0f, 0.0f, 0.0f });
+		renderPass->setDepthStencilClearValue(2, 1.0f, 0.0f);
+		renderPass->create();
+	} else {
+		const VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+		const VkAttachmentReference depthReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+
+		renderPass->addSubpassDescription({
+			0,
+			VK_PIPELINE_BIND_POINT_GRAPHICS,
+			0,
+			nullptr,
+			1,
+			&colorReference,
+			nullptr,
+			&depthReference,
+			0,
+			nullptr
+			});
+		// Color attachment
+		renderPass->addAttachmentDescription({
+			0,
+			swapChain.colorFormat,
+			VK_SAMPLE_COUNT_1_BIT,
+			VK_ATTACHMENT_LOAD_OP_CLEAR,
+			VK_ATTACHMENT_STORE_OP_STORE,
+			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+			});
+		// Depth attachment
+		renderPass->addAttachmentDescription({
+			0,
+			depthFormat,
+			VK_SAMPLE_COUNT_1_BIT,
+			VK_ATTACHMENT_LOAD_OP_CLEAR,
+			VK_ATTACHMENT_STORE_OP_STORE,
+			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+			});
+		// Subpass dependencies
+		renderPass->addSubpassDependency({
+			VK_SUBPASS_EXTERNAL,
+			0,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_MEMORY_READ_BIT,
+			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_DEPENDENCY_BY_REGION_BIT,
+			});
+		renderPass->addSubpassDependency({
+			0,
+			VK_SUBPASS_EXTERNAL,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_ACCESS_MEMORY_READ_BIT,
+			VK_DEPENDENCY_BY_REGION_BIT,
+			});
+		renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
+		renderPass->setDepthStencilClearValue(1, 1.0f, 0.0f);
+		renderPass->create();
+	}
 }
 
 void VulkanExampleBase::getEnabledFeatures()

@@ -30,6 +30,7 @@ public:
 	int mapChunkSize = 241;
 	int levelOfDetail = 1;
 	int treeDensity = 30;
+	int grassDensity = 256;
 	float minTreeSize = 0.75f;
 	float maxTreeSize = 1.5f;
 	int treeModelIndex = 2;
@@ -38,9 +39,12 @@ public:
 	float fogColor[3] = { 0.47f, 0.5f, 0.67f };
 	std::string skySphere = "skysphere01.ktx";
 
+	int grassDim = 256;
+	float grassScale = 0.5f;
+
 	float waterPosition = 1.75f;
 
-	float maxChunkDrawDistance = 460.0f;
+	float maxChunkDrawDistance = 360.0f; // 460.0f; @todo
 
 	void loadFromFile(const std::string filename);
 };

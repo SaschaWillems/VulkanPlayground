@@ -16,13 +16,21 @@ TerrainChunk::TerrainChunk(glm::ivec2 coords, int size) : size(size) {
 		min = glm::vec3(center) - glm::vec3((float)size / 2.0f);
 		max = glm::vec3(center) + glm::vec3((float)size / 2.0f);
 		heightMap = new vks::HeightMap(VulkanContext::device, VulkanContext::copyQueue);
-	};
+}
+TerrainChunk::~TerrainChunk()
+{
+	if (hasValidMesh) {
+		heightMap->vertexBuffer.destroy();
+		heightMap->indexBuffer.destroy();
+	}
+}
 
 void TerrainChunk::update() {
 
 }
 
 void TerrainChunk::updateHeightMap() {
+	std::cout << "Updating chunk at " << this->position.x << " / " << this->position.y << "\n";
 	assert(heightMap);
 	if (heightMap->vertexBuffer.buffer != VK_NULL_HANDLE) {
 		heightMap->vertexBuffer.destroy();
@@ -51,25 +59,22 @@ float TerrainChunk::getHeight(int x, int y) {
 
 void TerrainChunk::updateTrees() {
 	assert(heightMap);
-	if (instanceBuffer.buffer != VK_NULL_HANDLE) {
-		instanceBuffer.destroy();
-	}
 
 	float topLeftX = (float)(vks::HeightMap::chunkSize - 1) / -2.0f;
 	float topLeftZ = (float)(vks::HeightMap::chunkSize - 1) / 2.0f;
 
-	std::vector<InstanceData> instanceData;
-
 	// Random distribution
 
 	const int dim = 30; // 24 241
-	const int maxTreeCount = heightMapSettings.treeDensity * heightMapSettings.treeDensity;
+	treeInstanceCount = heightMapSettings.treeDensity * heightMapSettings.treeDensity;
+	std::vector<InstanceData> instanceData(treeInstanceCount);
+	trees.resize(treeInstanceCount);
 	std::default_random_engine prng(heightMapSettings.seed);
-	std::uniform_real_distribution<float> distribution(0, (float)(vks::HeightMap::chunkSize - 1));
+	std::uniform_real_distribution<float> distribution(0.0f, (float)(vks::HeightMap::chunkSize - 1));
 	std::uniform_real_distribution<float> scaleDist(heightMapSettings.minTreeSize, heightMapSettings.maxTreeSize);
-	std::uniform_real_distribution<float> rotDist(0.0, 1.0);
+	std::uniform_real_distribution<float> rotDist(0.0f, 1.0f);
 
-	for (int i = 0; i < maxTreeCount; i++) {
+	for (int i = 0; i < treeInstanceCount; i++) {
 		float xPos = distribution(prng);
 		float yPos = distribution(prng);
 		int terrainX = round(xPos + 0.5f);
@@ -86,7 +91,10 @@ void TerrainChunk::updateTrees() {
 		inst.pos = glm::vec3((float)topLeftX + xPos, -h, (float)topLeftZ - yPos);
 		inst.scale = glm::vec3(scaleDist(prng));
 		inst.rotation = glm::vec3(M_PI * rotDist(prng) * 0.035f, M_PI * rotDist(prng), M_PI * rotDist(prng) * 0.035f);
-		instanceData.push_back(inst);
+		instanceData[i] = inst;
+		trees[i].worldpos = glm::vec3((float)position.x, 0.0f, (float)position.y) * glm::vec3(vks::HeightMap::chunkSize - 1.0f, 0.0f, vks::HeightMap::chunkSize - 1.0f) + inst.pos;
+		trees[i].rotation = inst.rotation;
+		trees[i].scale = inst.scale;
 	}
 	// Even distribution
 	/*
@@ -117,16 +125,59 @@ void TerrainChunk::updateTrees() {
 	}
 	*/
 
-	treeInstanceCount = static_cast<uint32_t>(instanceData.size());
-	vks::Buffer stagingBuffer;
-	VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
-	VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &instanceBuffer, stagingBuffer.size));
-	VkCommandBuffer copyCmd = VulkanContext::device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true, VK_QUEUE_TRANSFER_BIT);
-	VkBufferCopy bufferCopy{};
-	bufferCopy.size = stagingBuffer.size;
-	vkCmdCopyBuffer(copyCmd, stagingBuffer.buffer, instanceBuffer.buffer, 1, &bufferCopy);
-	VulkanContext::device->flushCommandBuffer(copyCmd, VulkanContext::copyQueue, true, VK_QUEUE_TRANSFER_BIT);
-	stagingBuffer.destroy();
+	// @todo: remove
+	//if (treeInstanceCount > 0) {
+	//	vks::Buffer stagingBuffer;
+	//	VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBuffer, instanceData.size() * sizeof(InstanceData), instanceData.data()));
+	//	VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &instanceBuffer, stagingBuffer.size));
+	//	VkCommandBuffer copyCmd = VulkanContext::device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true, VK_QUEUE_TRANSFER_BIT);
+	//	VkBufferCopy bufferCopy{};
+	//	bufferCopy.size = stagingBuffer.size;
+	//	vkCmdCopyBuffer(copyCmd, stagingBuffer.buffer, instanceBuffer.buffer, 1, &bufferCopy);
+	//	VulkanContext::device->flushCommandBuffer(copyCmd, VulkanContext::copyQueue, true, VK_QUEUE_TRANSFER_BIT);
+	//	stagingBuffer.destroy();
+	//}
+}
+
+void TerrainChunk::updateGrass() {
+	// @todo: remove
+
+	// Random distribution
+	//grassInstanceCount = heightMapSettings.grassDensity * heightMapSettings.grassDensity;
+	//InstanceData* instanceData = new InstanceData[grassInstanceCount];
+	//VkDrawIndexedIndirectCommand* indirectData = new VkDrawIndexedIndirectCommand[grassInstanceCount];
+	//std::default_random_engine prng(heightMapSettings.seed);
+	//std::uniform_real_distribution<float> distribution(0.0f, (float)(vks::HeightMap::chunkSize - 1));
+	//std::uniform_real_distribution<float> scaleDist(0.75f, 1.25f);
+	//std::uniform_real_distribution<float> rotDist(0.0f, 1.0f);
+	//std::uniform_int_distribution<int> uvDist(0, 3);
+
+	//for (int i = 0; i < grassInstanceCount; i++) {
+	//	float xPos = distribution(prng);
+	//	float yPos = distribution(prng);
+	//	int terrainX = round(xPos + 0.5f);
+	//	int terrainY = round(yPos + 0.5f);
+	//	float h1 = getHeight(terrainX - 1, terrainY);
+	//	float h2 = getHeight(terrainX + 1, terrainY);
+	//	float h3 = getHeight(terrainX, terrainY - 1);
+	//	float h4 = getHeight(terrainX, terrainY + 1);
+	//	float h = (h1 + h2 + h3 + h4) / 4.0f;
+	//	if ((h <= heightMapSettings.waterPosition) || (h > 12.0f)) {
+	//		continue;
+	//	}
+	//	InstanceData inst{};
+	//	inst.pos = glm::vec3((float)topLeftX + xPos, -h, (float)topLeftZ - yPos);
+	//	inst.pos.y -= 0.25f;
+	//	inst.scale = glm::vec3(scaleDist(prng));
+	//	inst.scale.y *= 0.75f;
+	//	inst.rotation = glm::vec3(M_PI * rotDist(prng) * 0.035f, M_PI * rotDist(prng) * 2.0f, M_PI * rotDist(prng) * 0.035f);
+	//	inst.uv.s = 0.25f * uvDist(prng);
+	//	instanceData[i] = inst;
+	//}
+}
+
+void TerrainChunk::uploadBuffers()
+{
 }
 
 void TerrainChunk::draw(CommandBuffer* cb) {
