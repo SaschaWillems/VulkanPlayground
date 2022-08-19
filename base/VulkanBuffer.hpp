@@ -14,6 +14,9 @@
 
 #include "vulkan/vulkan.h"
 #include "VulkanTools.h"
+#include "DescriptorSet.hpp"
+#include "DescriptorSetLayout.hpp"
+#include "DescriptorPool.hpp"
 
 namespace vks
 {	
@@ -27,6 +30,7 @@ namespace vks
 		VkBuffer buffer = VK_NULL_HANDLE;
 		VkDeviceMemory memory = VK_NULL_HANDLE;
 		VkDescriptorBufferInfo descriptor;
+		DescriptorSet* descriptorSet = nullptr;
 		VkDeviceSize size = 0;
 		VkDeviceSize alignment = 0;
 		void* mapped = nullptr;
@@ -87,6 +91,15 @@ namespace vks
 			descriptor.offset = offset;
 			descriptor.buffer = buffer;
 			descriptor.range = size;
+		}
+
+		void createDescriptorSet(DescriptorPool *pool, DescriptorSetLayout *layout)
+		{
+			this->descriptorSet = new DescriptorSet(device);
+			this->descriptorSet->setPool(pool);
+			this->descriptorSet->addLayout(layout);
+			this->descriptorSet->addDescriptor(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &descriptor);
+			this->descriptorSet->create();
 		}
 
 		/**

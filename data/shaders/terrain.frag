@@ -9,12 +9,13 @@
 #include "includes/constants.glsl"
 #include "includes/types.glsl"
 
-layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
-layout (set = 0, binding = 1) uniform sampler2DArray samplerLayers;
-layout (set = 0, binding = 2) uniform sampler2DArray shadowMap;
-layout (set = 0, binding = 3) uniform UBOCSM { UBOShadowCascades uboCSM; };
+layout (set = 0, binding = 0) uniform sampler2DArray samplerLayers;
+layout (set = 0, binding = 1) uniform sampler2DArray shadowMap;
 
-layout (set = 1, binding = 0) uniform ParamBlock { UBOParams params; };
+layout (set = 2, binding = 0) uniform ParamBlock { UBOParams params; };
+layout (set = 3, binding = 0) uniform UBOCSM { UBOShadowCascades uboCSM; };
+
+//layout (set = 4, binding = 0) uniform sampler2DArray shadowMap;
 
 layout(push_constant) uniform PushConsts {
 	mat4 scale;
@@ -73,15 +74,15 @@ void main()
 {
 	// Shadows
 	float shadow = 1.0;
-	if (params.shadows > 0) {
+	if ((params.shadows > 0) && (length(pushConsts.clipPlane) == 0.0)) {
 		shadow = shadowMapping(vec4(0.0), inPos, shadowMap);
 	}
 
 	// Directional light
 	vec3 N = normalize(inNormal);
-	vec3 L = normalize(-ubo.lightDir.xyz);
+	vec3 L = normalize(inLightVec);
 	float diffuse = dot(N, L);
-	vec3 color = (ambient + (1.0 - shadow) * diffuse) * sampleTerrainLayer();
+	vec3 color = (ambient + (shadow * diffuse)) * sampleTerrainLayer();
 
 	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color), 1.0);
@@ -90,5 +91,4 @@ void main()
 	}
 
 	outFragColor.a = clamp(pushConsts.alpha, 0.0, 1.0);
-
 }

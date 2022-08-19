@@ -28,7 +28,7 @@ public:
 	bool chunkPresent(glm::ivec2 coords);
 	TerrainChunk* getChunk(glm::ivec2 coords);
 	TerrainChunk* getChunkFromWorldPos(glm::vec3 coords);
-	bool getHeight(const glm::vec3 worldPos, float &height);
+	bool getHeightAndRandomValue(const glm::vec3 worldPos, float &height,float& randomValue);
 	int getVisibleChunkCount();
 	int getVisibleTreeCount();
 	bool updateVisibleChunks(vks::Frustum& frustum);

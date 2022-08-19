@@ -19,7 +19,7 @@ TerrainChunk::TerrainChunk(glm::ivec2 coords, int size) : size(size) {
 }
 TerrainChunk::~TerrainChunk()
 {
-	if (hasValidMesh) {
+	if (state == TerrainChunk::State::generated) {
 		heightMap->vertexBuffer.destroy();
 		heightMap->indexBuffer.destroy();
 	}
@@ -55,6 +55,12 @@ void TerrainChunk::updateHeightMap() {
 float TerrainChunk::getHeight(int x, int y) {
 	assert(heightMap);
 	return heightMap->getHeight(x, y);
+}
+
+float TerrainChunk::getRandomValue(int x, int y)
+{
+	assert(heightMap);
+	return heightMap->getRandomValue(x, y);
 }
 
 void TerrainChunk::updateTrees() {
@@ -95,6 +101,8 @@ void TerrainChunk::updateTrees() {
 		trees[i].worldpos = glm::vec3((float)position.x, 0.0f, (float)position.y) * glm::vec3(vks::HeightMap::chunkSize - 1.0f, 0.0f, vks::HeightMap::chunkSize - 1.0f) + inst.pos;
 		trees[i].rotation = inst.rotation;
 		trees[i].scale = inst.scale;
+		trees[i].color = glm::vec4(0.6f + rotDist(prng) * 0.4f);
+		trees[i].color.a = 1.0f;
 	}
 	// Even distribution
 	/*
@@ -181,7 +189,7 @@ void TerrainChunk::uploadBuffers()
 }
 
 void TerrainChunk::draw(CommandBuffer* cb) {
-	if (hasValidMesh) {
+	if (state == TerrainChunk::State::generated) {
 		heightMap->draw(cb->handle);
 	}
 }

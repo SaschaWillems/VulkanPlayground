@@ -39,6 +39,16 @@ layout(push_constant) uniform PushConsts {
 
 void main(void)
 {
+	float maxDist = 128.0;
+//	if (pushConsts.scale[1][1] < 0) {
+//		maxDist /= 2.0;
+//	}
+//	float dist = distance(inPos.xyz + instancePos + pushConsts.pos, ubo.cameraPos.xyz);
+//	if (dist > maxDist) {
+//		gl_Position = vec4(0.0 / 0.0);
+//		return;
+//	}
+
 	outUV = inUV + instanceUV;
 	outNormal = inNormal;
 	outColor = instanceColor;
@@ -83,7 +93,7 @@ void main(void)
 
 	outPos = pos.xyz;
 	outViewVec = -pos.xyz;
-	outLightVec = normalize(-ubo.lightDir.xyz/* + outViewVec*/);
+	outLightVec = normalize(ubo.lightDir.xyz + outViewVec);
 	outViewPos = (ubo.modelview * vec4(pos.xyz, 1.0)).xyz;
 
 	outNormal = inNormal; //normalize(inverse(rotMat) * inNormal);

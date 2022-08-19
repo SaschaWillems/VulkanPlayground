@@ -7,6 +7,7 @@ struct UBOParams {
 	uint shadows;
 	uint fog;
 	uint alphaDiscard;
+	uint shadowPCF;
 	vec4 fogColor;
 	vec4 waterColor;
 	vec4 layers[6];

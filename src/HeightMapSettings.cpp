@@ -44,6 +44,9 @@ void HeightMapSettings::loadFromFile(const std::string filename)
 	if (settings.find("treeDensity") != settings.end()) {
 		treeDensity = (int)settings["treeDensity"];
 	}
+	if (settings.find("grassDensity") != settings.end()) {
+		grassDensity = (int)settings["grassDensity"];
+	}
 	if (settings.find("treeModelIndex") != settings.end()) {
 		treeModelIndex = (int)settings["treeModelIndex"];
 	}

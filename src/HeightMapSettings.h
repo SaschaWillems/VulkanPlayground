@@ -39,8 +39,8 @@ public:
 	float fogColor[3] = { 0.47f, 0.5f, 0.67f };
 	std::string skySphere = "skysphere01.ktx";
 
-	int grassDim = 256;
-	float grassScale = 0.5f;
+	int grassDim = 175; // 256;
+	float grassScale = 0.5f; // @todo
 
 	float waterPosition = 1.75f;
 

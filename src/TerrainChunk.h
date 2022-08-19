@@ -35,6 +35,9 @@ struct ObjectData {
 
 class TerrainChunk {
 public:
+	enum class State { _new, generating, generated, deleting, deleted };
+
+	State state = State::_new;
 	vks::HeightMap* heightMap = nullptr;
 	glm::ivec2 position;
 	glm::vec3 center;
@@ -42,7 +45,7 @@ public:
 	glm::vec3 max;
 	std::vector<ObjectData> trees;
 	int size;
-	bool hasValidMesh = false;
+	//bool hasValidMesh = false;
 	bool visible = false;
 	int treeInstanceCount = 0;
 	int grassInstanceCount = 0;
@@ -53,6 +56,7 @@ public:
 	void update();
 	void updateHeightMap();
 	float getHeight(int x, int y);
+	float getRandomValue(int x, int y);
 	void updateTrees();
 	void updateGrass();
 	void uploadBuffers();

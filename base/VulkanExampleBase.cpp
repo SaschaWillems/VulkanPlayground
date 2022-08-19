@@ -1,3 +1,4 @@
+
 /*
 * Vulkan Example base class
 *
@@ -304,8 +305,8 @@ void VulkanExampleBase::renderLoop()
 				break;
 			}
 		}
-		if (!IsIconic(window)) {
-			renderFrame();
+		if (prepared && !IsIconic(window)) {
+			nextFrame();
 		}
 	}
 #elif defined(VK_USE_PLATFORM_ANDROID_KHR)
@@ -1275,6 +1276,7 @@ void VulkanExampleBase::handleMessages(HWND hWnd, UINT uMsg, WPARAM wParam, LPAR
 		resizing = false;
 		break;
 	}
+	camera.keys.shift = (GetKeyState(VK_SHIFT) & 0x8000);
 }
 #elif defined(VK_USE_PLATFORM_ANDROID_KHR)
 int32_t VulkanExampleBase::handleAppInput(struct android_app* app, AInputEvent* event)
@@ -2495,3 +2497,158 @@ void VulkanExampleBase::setupSwapChain()
 }
 
 void VulkanExampleBase::OnUpdateUIOverlay(vks::UIOverlay *overlay) {}
+
+void VulkanExampleBase::prepareFrame(VulkanFrameObjects& frame)
+{
+
+	// Ensure command buffer execution has finished
+	VK_CHECK_RESULT(vkWaitForFences(device, 1, &frame.renderCompleteFence, VK_TRUE, UINT64_MAX));
+	VK_CHECK_RESULT(vkResetFences(device, 1, &frame.renderCompleteFence));
+	// Acquire the next image from the swap chain
+	VkResult result = swapChain.acquireNextImage(frame.presentCompleteSemaphore, &currentBuffer);
+	// @todo: rework after removing currentBuffer
+	swapChain.currentImageIndex = currentBuffer;
+	// Recreate the swapchain if it's no longer compatible with the surface (OUT_OF_DATE) or no longer optimal for presentation (SUBOPTIMAL)
+	if ((result == VK_ERROR_OUT_OF_DATE_KHR) || (result == VK_SUBOPTIMAL_KHR)) {
+		windowResize();
+	}
+	else {
+		VK_CHECK_RESULT(result);
+	}
+	//	 @todo: check if ui overlay needs to be updated
+		//if (settings.overlay) {
+		//	updateOverlay();
+		//	if (UIOverlay.bufferUpdateRequired()) {
+		//		std::cout << "UI buffers need to be recreated\n";
+		//		// Ensure all command buffers have finished execution, so we don't change vertex and/or index buffers still in use
+		//		// @todo: wait for fences instead?
+		//		//vkQueueWaitIdle(queue);
+		//		UIOverlay.allocateBuffers();
+		//	}
+		//	// @todo: cap update rate
+		//	UIOverlay.updateBuffers();
+		//}
+}
+
+void VulkanExampleBase::submitFrame(VulkanFrameObjects& frame)
+{
+	// Submit command buffer to queue
+	VkPipelineStageFlags submitWaitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	submitInfo = vks::initializers::submitInfo();
+	submitInfo.pWaitDstStageMask = &submitWaitStages;
+	submitInfo.waitSemaphoreCount = 1;
+	submitInfo.pWaitSemaphores = &frame.presentCompleteSemaphore;
+	submitInfo.signalSemaphoreCount = 1;
+	submitInfo.pSignalSemaphores = &frame.renderCompleteSemaphore;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &frame.commandBuffer->handle;
+	VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, frame.renderCompleteFence));
+
+	// Present image to queue
+	VkResult result = swapChain.queuePresent(queue, currentBuffer, frame.renderCompleteSemaphore);
+	if (!((result == VK_SUCCESS) || (result == VK_SUBOPTIMAL_KHR))) {
+		if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+			// Swap chain is no longer compatible with the surface and needs to be recreated
+			windowResize();
+			return;
+		}
+		else {
+			VK_CHECK_RESULT(result);
+		}
+	}
+
+	frameIndex++;
+	if (frameIndex >= renderAhead) {
+		frameIndex = 0;
+	}
+}
+
+uint32_t VulkanExampleBase::getFrameCount()
+{
+	return renderAhead;
+}
+
+uint32_t VulkanExampleBase::getCurrentFrameIndex()
+{
+	return frameIndex;
+}
+
+void VulkanExampleBase::createBaseFrameObjects(VulkanFrameObjects& frame)
+{
+	VkCommandBufferAllocateInfo cmdBufAllocateInfo = vks::initializers::commandBufferAllocateInfo(commandPool->handle, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1);
+	frame.commandBuffer = new CommandBuffer(device);
+	frame.commandBuffer->setPool(commandPool);
+	frame.commandBuffer->create();
+	//VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, &frame.commandBuffer));
+	VkFenceCreateInfo fenceCreateInfo = vks::initializers::fenceCreateInfo(VK_FENCE_CREATE_SIGNALED_BIT);
+	VK_CHECK_RESULT(vkCreateFence(device, &fenceCreateInfo, nullptr, &frame.renderCompleteFence));
+	VkSemaphoreCreateInfo semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
+	VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.presentCompleteSemaphore));
+	VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.renderCompleteSemaphore));
+}
+
+void VulkanExampleBase::destroyBaseFrameObjects(VulkanFrameObjects& frame)
+{
+	vkDestroyFence(device, frame.renderCompleteFence, nullptr);
+	vkDestroySemaphore(device, frame.presentCompleteSemaphore, nullptr);
+	vkDestroySemaphore(device, frame.renderCompleteSemaphore, nullptr);
+}
+
+void VulkanExampleBase::nextFrame()
+{
+	auto tStart = std::chrono::high_resolution_clock::now();
+
+	// Check if the overlay's index and vertex buffers needs to be updated (recreated), e.g. because new elements are visible and indices or vertices require additional buffer space
+	if (settings.overlay) {
+		// @todo
+		//if (UIOverlay.bufferUpdateRequired()) {
+		//	std::cout << "UI buffers need to be recreated\n";
+		//}
+	}
+	// TODO: Cap UI overlay update rates
+	updateOverlay();
+
+	if (viewUpdated)
+	{
+		viewUpdated = false;
+		viewChanged();
+	}
+
+	if (prepared) {
+		render();
+	}
+	// @todo
+	// resized = false;
+	frameCounter++;
+	auto tEnd = std::chrono::high_resolution_clock::now();
+	auto tDiff = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+	frameTimer = (float)tDiff / 1000.0f;
+	camera.update(frameTimer);
+	if (camera.moving())
+	{
+		viewUpdated = true;
+	}
+	// Convert to clamped timer value
+	if (!paused)
+	{
+		timer += timerSpeed * frameTimer;
+		if (timer > 1.0)
+		{
+			timer -= 1.0f;
+		}
+	}
+	float fpsTimer = (float)(std::chrono::duration<double, std::milli>(tEnd - lastTimestamp).count());
+	if (fpsTimer > 1000.0f)
+	{
+		lastFPS = static_cast<uint32_t>((float)frameCounter * (1000.0f / fpsTimer));
+#if defined(_WIN32)
+		if (!settings.overlay) {
+			std::string windowTitle = getWindowTitle();
+			SetWindowText(window, windowTitle.c_str());
+		}
+#endif
+		frameCounter = 0;
+		lastTimestamp = tEnd;
+	}
+	UIOverlay.updated = false;
+}

@@ -9,14 +9,14 @@
 #include "includes/constants.glsl"
 #include "includes/types.glsl"
 
-layout (set = 0, binding = 0) uniform SharedBlock { UBOShared ubo; };
-layout (set = 0, binding = 1) uniform sampler2D samplerRefraction;
-layout (set = 0, binding = 2) uniform sampler2D samplerReflection;
-layout (set = 0, binding = 3) uniform sampler2D samplerWaterNormalMap;
-layout (set = 0, binding = 4) uniform sampler2DArray shadowMap;
-layout (set = 0, binding = 5) uniform UBOCSM { UBOShadowCascades uboCSM; };
+layout (set = 0, binding = 0) uniform sampler2D samplerRefraction;
+layout (set = 0, binding = 1) uniform sampler2D samplerReflection;
+layout (set = 0, binding = 2) uniform sampler2D samplerWaterNormalMap;
+layout (set = 0, binding = 3) uniform sampler2DArray shadowMap;
 
-layout (set = 1, binding = 0) uniform ParamBlock { UBOParams params; };
+layout (set = 1, binding = 0) uniform SharedBlock { UBOShared ubo; };
+layout (set = 2, binding = 0) uniform ParamBlock { UBOParams params; };
+layout (set = 3, binding = 0) uniform UBOCSM { UBOShadowCascades uboCSM; };
 
 layout (location = 0) in vec2 inUV;
 layout (location = 1) in vec4 inPos;
@@ -71,7 +71,8 @@ void main()
 		vec4 refraction = texture(samplerRefraction, vec2(projCoord) + dudv.st);
 		vec4 reflection = texture(samplerReflection, vec2(projCoord) + dudv.st);
 		color *= mix(refraction, reflection, fresnel);
-		color *= (ambient + (1.0 - shadow));
+		color *= shadow;
+//		color *= ambient * shadow;
 	}
 
 	if (params.fog == 1) {

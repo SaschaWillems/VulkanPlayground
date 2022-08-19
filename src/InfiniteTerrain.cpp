@@ -23,11 +23,23 @@ bool InfiniteTerrain::chunkPresent(glm::ivec2 coords) {
 			return true;
 		}
 	}
+	// @todo
+	for (auto& chunk : terrainChunkgsUpdateList) {
+		if (chunk->position.x == coords.x && chunk->position.y == coords.y) {
+			return true;
+		}
+	}
 	return false;
 }
 
 TerrainChunk* InfiniteTerrain::getChunk(glm::ivec2 coords) {
 	for (auto& chunk : terrainChunks) {
+		if (chunk->position.x == coords.x && chunk->position.y == coords.y) {
+			return chunk;
+		}
+	}
+	// @todo
+	for (auto& chunk : terrainChunkgsUpdateList) {
 		if (chunk->position.x == coords.x && chunk->position.y == coords.y) {
 			return chunk;
 		}
@@ -47,20 +59,26 @@ TerrainChunk* InfiniteTerrain::getChunkFromWorldPos(glm::vec3 coords)
 	return nullptr;
 }
 
-bool InfiniteTerrain::getHeight(const glm::vec3 worldPos, float& height)
+bool InfiniteTerrain::getHeightAndRandomValue(const glm::vec3 worldPos, float& height, float& randomValue)
 {
+	// @todo: skip chunks that are too far away?
 	const int chunkCoordX = round(worldPos.x / (float)(heightMapSettings.mapChunkSize - 1));
 	const int chunkCoordY = round(worldPos.z / (float)(heightMapSettings.mapChunkSize - 1));
 	for (auto& chunk : terrainChunks) {
 		if (chunk->position.x == chunkCoordX && chunk->position.y == chunkCoordY) {
 			const float topLeftX = (chunk->position.x * (float)(vks::HeightMap::chunkSize - 1)) - (float)(vks::HeightMap::chunkSize - 1) / 2.0f;
 			const float topLeftZ = (chunk->position.y * (float)(vks::HeightMap::chunkSize - 1)) - (float)(vks::HeightMap::chunkSize - 1) / -2.0f;
-			//float h1 = chunk->getHeight(terrainX - 1, terrainY);
-			//float h2 = chunk->getHeight(terrainX + 1, terrainY);
-			//float h3 = chunk->getHeight(terrainX, terrainY - 1);
-			//float h4 = chunk->getHeight(terrainX, terrainY + 1);
-			//float h = (h1 + h2 + h3 + h4) / 4.0f;
+			//int terrainX = round(worldPos.x - topLeftX) + 0.5f;
+			//int terrainY = -round(worldPos.z - topLeftZ) + 0.5f;
+			//float h0 = chunk->getHeight(terrainX, terrainY);
+			//float h1 = chunk->getHeight(terrainX - 2, terrainY);
+			//float h2 = chunk->getHeight(terrainX + 2, terrainY);
+			//float h3 = chunk->getHeight(terrainX, terrainY - 2);
+			//float h4 = chunk->getHeight(terrainX, terrainY + 2);
+			//float h = (h0 + h1 + h2 + h3 + h4) / 5.0f;
+			//height = -h;
 			height = -chunk->getHeight(round(worldPos.x - topLeftX) + 0.5f, -round(worldPos.z - topLeftZ) + 0.5f);
+			//randomValue = chunk->getRandomValue(round(worldPos.x - topLeftX) + 0.5f, -round(worldPos.z - topLeftZ) + 0.5f);
 			return true;
 		}
 	}
@@ -80,7 +98,7 @@ int InfiniteTerrain::getVisibleChunkCount() {
 int InfiniteTerrain::getVisibleTreeCount() {
 	int count = 0;
 	for (auto& chunk : terrainChunks) {
-		if (chunk->hasValidMesh && chunk->visible) {
+		if ((chunk->state == TerrainChunk::State::generated) && chunk->visible) {
 			count += chunk->treeInstanceCount;
 		}
 	}
@@ -94,8 +112,8 @@ bool InfiniteTerrain::updateVisibleChunks(vks::Frustum& frustum) {
 	for (int yOffset = -chunksVisibleInViewDistance; yOffset <= chunksVisibleInViewDistance; yOffset++) {
 		for (int xOffset = -chunksVisibleInViewDistance; xOffset <= chunksVisibleInViewDistance; xOffset++) {
 			glm::ivec2 viewedChunkCoord = glm::ivec2(currentChunkCoordX + xOffset, currentChunkCoordY + yOffset);
-			if (chunkPresent(viewedChunkCoord)) {
-				TerrainChunk* chunk = getChunk(viewedChunkCoord);
+			TerrainChunk* chunk = getChunk(viewedChunkCoord);
+			if (chunk) {
 				chunk->visible = true;
 			}
 			else {
@@ -110,6 +128,20 @@ bool InfiniteTerrain::updateVisibleChunks(vks::Frustum& frustum) {
 			}
 		}
 	}
+
+	// @todo
+	//int idx = 0;
+	//auto it = terrainChunkgsUpdateList.begin();
+	//for (; it != terrainChunkgsUpdateList.end(); ) {
+	//	std::cout << idx++ << "\n";
+	//	if ((*it)->state == TerrainChunk::State::generated) {
+	//		terrainChunks.push_back((*it));
+	//		it = terrainChunkgsUpdateList.erase(it);
+	//	}
+	//	else {
+	//		++it;
+	//	}
+	//}
 
 	// Update visibility
 	for (auto& chunk : terrainChunks) {
@@ -127,7 +159,6 @@ void InfiniteTerrain::updateChunks() {
 		heightMapSettings.offset.y = (float)terrainChunk->position.y * (float)(chunkSize);
 		terrainChunk->updateHeightMap();
 		terrainChunk->updateTrees();
-		terrainChunk->hasValidMesh = true;
 		heightMapSettings.levelOfDetail = l;
 	}
 }
@@ -144,7 +175,7 @@ void InfiniteTerrain::clear() {
 // @todo
 void InfiniteTerrain::update(float deltaTime) {
 	for (auto& chunk : terrainChunks) {
-		if ((chunk->hasValidMesh) && (chunk->alpha < 1.0f)) {
+		if ((chunk->state == TerrainChunk::State::generated) && (chunk->alpha < 1.0f)) {
 			chunk->alpha += 2.0f * deltaTime;
 		}
 	}

@@ -38,18 +38,9 @@ layout (location = 0) out vec4 outFragColor;
 #include "includes/fog.glsl"
 #include "includes/shadow.glsl"
 
-float CalcMipLevel(vec2 texture_coord)
-{
-    vec2 dx = dFdx(texture_coord);
-    vec2 dy = dFdy(texture_coord);
-    float delta_max_sqr = max(dot(dx, dx), dot(dy, dy));
-                
-    return max(0.0, 0.5 * log2(delta_max_sqr));
-}
-
 void main(void)
 {
-	vec4 colorMap = texture(samplerColorMap, inUV) * inColor;
+	vec4 colorMap = texture(samplerColorMap, inUV) * vec4(inColor.rgb, 1.0);
 
 	// Shadows
 	float shadow = 1.0;
@@ -58,24 +49,27 @@ void main(void)
 	}
 
 	// Lighting
-	float amb = 1.0;
+	float amb = 0.5;
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(inLightVec);
-	float diffuse = dot(N, L);
-	vec3 color = (amb + diffuse) * shadow * colorMap.rgb; 
-	
-    color = colorMap.rgb * shadow * 0.75;
+	vec3 V = normalize(inViewVec);
+	vec3 R = reflect(-L, N);
+	vec3 diffuse = max(dot(N, L), amb).rrr;
+	const float specular = 0.0f; //pow(max(dot(R, V), 0.0), 32.0);
 
-	// @todo: doesn't seem to work, check param block binding
+	vec3 gColor = vec3(69.0, 98.0, 31.0) / 255.0;
+	vec3 color = (ambient + (shadow * diffuse)) * colorMap.rgb * gColor;
+
+//	vec3 color = vec3(diffuse * colorMap.rgb + specular);
 	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color), colorMap.a);
 	} else {
 		outFragColor = vec4(color, colorMap.a);
 	}
 
-	vec2 texSize = vec2(1.0) / textureSize(samplerColorMap, 0);
-	float _Cutoff = 0.15;
-	float _MipScale = 0.25;
-    outFragColor.a *= 1 + max(0, CalcMipLevel(inUV * texSize.xy)) * _MipScale;
-	outFragColor.a = (outFragColor.a - _Cutoff) / max(fwidth(outFragColor.a), 0.0001) + 0.5;
+//	outFragColor.a *= clamp(pushConsts.alpha, 0.0, 1.0);
+
+	outFragColor.a *= inColor.a;
+//	outFragColor.a = 1.0;
+//	outFragColor.rgb = inColor.aaa;
 }

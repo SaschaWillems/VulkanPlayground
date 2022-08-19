@@ -58,6 +58,14 @@
 #include "CommandPool.hpp"
 #include "RenderPass.hpp"
 
+struct VulkanFrameObjects
+{
+	CommandBuffer* commandBuffer;
+	VkFence renderCompleteFence;
+	VkSemaphore renderCompleteSemaphore;
+	VkSemaphore presentCompleteSemaphore;
+};
+
 class VulkanExampleBase
 {
 private:	
@@ -139,6 +147,9 @@ protected:
 		VkSemaphore renderComplete;
 	} semaphores;
 	std::vector<VkFence> waitFences;
+	// @todo
+	uint32_t frameIndex = 0;
+	uint32_t renderAhead = 2;
 public: 
 	bool prepared = false;
 	uint32_t width = 1280;
@@ -401,6 +412,8 @@ public:
 	void updateOverlay();
 	void drawUI(const VkCommandBuffer commandBuffer);
 
+	void nextFrame();
+
 	// Prepare the frame for workload submission
 	// - Acquires the next image from the swap chain 
 	// - Sets the default wait and signal semaphores
@@ -411,6 +424,15 @@ public:
 
 	/** @brief (Virtual) Called when the UI overlay is updating, can be used to add custom elements to the overlay */
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay);
+
+	// @todo: Functions for reworked proper sync and per-frame resources
+	void prepareFrame(VulkanFrameObjects& frame);
+	void submitFrame(VulkanFrameObjects& frame);
+	uint32_t getFrameCount();
+	uint32_t getCurrentFrameIndex();
+
+	void createBaseFrameObjects(VulkanFrameObjects& frame);
+	void destroyBaseFrameObjects(VulkanFrameObjects& frame);
 };
 
 // OS specific macros for the example main entry points

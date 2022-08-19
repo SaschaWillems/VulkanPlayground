@@ -12,12 +12,12 @@ const mat4 biasMat = mat4(
 
 float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex, sampler2DArray shadowCascades)
 {
-	float shadow = 0.0;
+	float shadow = 1.0;
 	float bias = 0.005;
 	if ( shadowCoord.z > -1.0 && shadowCoord.z < 1.0 ) {
 		float dist = texture(shadowCascades, vec3(shadowCoord.st + offset, cascadeIndex)).r;
 		if (shadowCoord.w > 0 && dist < shadowCoord.z - bias) {
-			shadow = 1.0;
+			shadow = 0.5;
 		}
 	}
 	return shadow;
@@ -57,11 +57,11 @@ float shadowMapping(vec4 dist, vec3 pos, sampler2DArray shadowCascades)
 	// Depth compare for shadowing
 	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(pos.xyz + dist.xyz, 1.0);	
 
-	float shadow = 0;
-	bool enablePCF = false;
-	if (enablePCF) {
-		return filterPCF(shadowCoord / shadowCoord.w, cascadeIndex, shadowCascades);
-	} else {
-		return textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex, shadowCascades);
-	}
+#define _PCF
+
+#ifdef PCF
+	return filterPCF(shadowCoord / shadowCoord.w, cascadeIndex, shadowCascades);
+#else
+	return textureProj(shadowCoord / shadowCoord.w, vec2(0.0), cascadeIndex, shadowCascades);
+#endif
 }

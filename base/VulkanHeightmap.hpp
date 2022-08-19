@@ -15,6 +15,7 @@
 #include "VulkanBuffer.hpp"
 #include "VulkanTexture.hpp"
 #include "Noise.h"
+#include <random>
 #include <ktx.h>
 #include <ktxvulkan.h>
 
@@ -40,6 +41,9 @@ namespace vks
 		static constexpr const int chunkSize = 241;
 		// Height data also contains info on neighbouring borders to properly calculate normals
 		float heights[chunkSize + 2][chunkSize + 2];
+		// Store random values for each heightmap position that can be used at runtime for dynamic randomization (like grass rendering)
+		float randomValues[chunkSize + 2][chunkSize + 2];
+		// @todo: store random values per coordinate for doing random stuff, e.g. grass rendering
 		enum Topology { topologyTriangles, topologyQuads };
 
 		float minHeight = std::numeric_limits<float>::max();
@@ -114,9 +118,24 @@ namespace vks
 			//return height;
 		}
 
+		float getRandomValue(uint32_t x, uint32_t y)
+		{
+			if (x < 0) { x = 0; }
+			if (y < 0) { y = 0; }
+			if (x > chunkSize + 1) { x = chunkSize + 1; }
+			if (y > chunkSize + 1) { y = chunkSize + 1; }
+			return randomValues[x][y];
+		}
+
 		float inverseLerp(float xx, float yy, float value)
 		{
 			return (value - xx) / (yy - xx);
+		}
+
+		float gold_noise(glm::vec2 xy, float seed) {
+			const float PHI = 1.61803398874989484820459;
+			float ip;
+			return modf(tan(glm::distance(xy * PHI, xy) * seed) * xy.x, &ip);
 		}
 
 		void generate(int seed, float noiseScale, int octaves, float persistence, float lacunarity, glm::vec2 offset)
@@ -143,6 +162,8 @@ namespace vks
 
 			float halfWidth = (chunkSize + 2) / 2.0f;
 			float halfHeight = (chunkSize + 2) / 2.0f;
+
+			std::normal_distribution<float> rndDist(0.0f, 1.0f);
 
 			for (int32_t y = 0; y < chunkSize + 2; y++) {
 				for (int32_t x = 0; x < chunkSize + 2; x++) {
@@ -171,6 +192,8 @@ namespace vks
 					}
 
 					heights[x][y] = noiseHeight;
+					//randomValues[x][y] = gold_noise(glm::vec2((float)x, (float)y) + offset, (float)(x + offset.x) + (float)(y + offset.y) * (float)chunkSize);
+					randomValues[x][y] = gold_noise(glm::vec2((float)x + 0.5f, (float)y + 0.5f), (float)(x) + (float)(y) * (float)chunkSize * (float)seed);
 				}
 			}
 
