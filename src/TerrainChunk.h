@@ -31,6 +31,7 @@ struct ObjectData {
 	glm::vec2 uv;
 	float distance;
 	int visibilityInfo = 0;
+	bool visible = true;
 };
 
 class TerrainChunk {

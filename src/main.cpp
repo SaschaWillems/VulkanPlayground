@@ -50,13 +50,12 @@
 #include "InfiniteTerrain.h"
 
 #define ENABLE_VALIDATION false
-#define FB_DIM 1024
-#define SHADOWMAP_DIM 4096
+#define FB_DIM 768
+#define SHADOWMAP_DIM 2048
 #define SHADOW_MAP_CASCADE_COUNT 4
 
 vks::Frustum frustum;
 const float chunkDim = 241.0f;
-float maxTreeDrawDistance = 150.0f;
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -89,18 +88,21 @@ public:
 	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
 	enum class FramebufferType { Color, DepthStencil };
 
-	const std::vector<std::string> treeModels = { 
-		"spruce/spruce.gltf", 
-		"spruce_impostor/spruce_impostor.gltf",
-		"pine/pine.gltf",
-		"fir/fir.gltf",
-		"acacia/acacia.gltf",
-		"beech/beech.gltf",
-		"joshua/joshua.gltf",
-		"tropical/tropical.gltf",
-		"banana/banana.gltf",
-		"willow/willow.gltf",
+	struct TreeModelInfo {
+		std::string name;
+		float imposterScale = 1.0f;
+		struct Models {
+			vkglTF::Model model;
+			vkglTF::Model imposter;
+		} models;
 	};
+	int selectedTreeType = 0;
+
+	const std::vector<std::string> treeTypes = {
+		"spruce", "fir", "tropical", "tropical2"
+	};
+
+	std::vector<TreeModelInfo> treeModelInfo;
 
 	const std::vector<std::string> presets = {
 		"default",
@@ -151,15 +153,8 @@ public:
 	struct Models {
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
-		std::vector<vkglTF::Model> trees;
 		vkglTF::Model grass;
 	} models;
-
-	//struct {
-	//	vks::Buffer vsShared;
-	//	vks::Buffer CSM;
-	//	vks::Buffer params;
-	//} uniformBuffers;
 
 	struct UBO {
 		glm::mat4 projection;
@@ -173,7 +168,13 @@ public:
 		float cascadeSplits[SHADOW_MAP_CASCADE_COUNT];
 		glm::mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 		glm::mat4 inverseViewMat;
-		glm::vec3 lightDir;
+		glm::vec4 lightDir;
+		glm::mat4 biasMat = glm::mat4(
+			0.5f, 0.0f, 0.0f, 0.0f,
+			0.0f, 0.5f, 0.0f, 0.0f,
+			0.0f, 0.0f, 1.0f, 0.0f,
+			0.5f, 0.5f, 0.0f, 1.0f
+		);
 	} uboCSM;
 
 	struct UniformDataParams {
@@ -285,7 +286,7 @@ public:
 
 	// Dynamic buffers
 	struct DrawBatchBuffer : vks::Buffer {
-		uint32_t elements = 0;
+		int32_t elements = 0;
 	};
 	struct DrawBatch {
 		vkglTF::Model* model = nullptr;
@@ -351,6 +352,11 @@ public:
 		for (auto& terrainChunk : chunks) {
 			if (terrainChunk->treeInstanceCount > 0) {
 				for (auto& object : terrainChunk->trees) {
+					if (!frustum.checkSphere(object.worldpos, 10.0f)) {
+						object.visible = false;
+						continue;
+					}
+					object.visible = true;
 					float d = glm::distance(object.worldpos, camera.position);
 					object.distance = d;
 					if (d < maxViewFullDist) {
@@ -382,27 +388,28 @@ public:
 		for (auto& terrainChunk : chunks) {
 			if (terrainChunk->treeInstanceCount > 0) {
 				for (auto& object : terrainChunk->trees) {
-					if (object.distance < maxViewFullDist) {
-						if (idxFull > countFull) {
-							continue;
-						}
-						idTrees[idxFull].pos = object.worldpos;
-						idTrees[idxFull].rotation = object.rotation;
-						idTrees[idxFull].scale = object.scale;
-						idTrees[idxFull].color = object.color;
-						idxFull++;
-					}
-					else {
-						if (object.distance < maxViewDist) {
-							if (idxFull > countImpostor) {
+					if (object.visible) {
+						if (object.distance < maxViewFullDist) {
+							if (idxFull > countFull) {
 								continue;
 							}
-							idImpostors[idxImpostor].pos = object.worldpos;
-							idImpostors[idxImpostor].rotation = object.rotation;
-							// Impostor model is slightly larger than tree, so we need to scale it down a bit
-							idImpostors[idxImpostor].scale = object.scale * 0.65f;
-							idImpostors[idxImpostor].color = object.color;
-							idxImpostor++;
+							idTrees[idxFull].pos = object.worldpos;
+							idTrees[idxFull].rotation = object.rotation;
+							idTrees[idxFull].scale = object.scale;
+							idTrees[idxFull].color = object.color;
+							idxFull++;
+						}
+						else {
+							if (object.distance < maxViewDist) {
+								if (idxFull > countImpostor) {
+									continue;
+								}
+								idImpostors[idxImpostor].pos = object.worldpos;
+								idImpostors[idxImpostor].rotation = object.rotation;
+								idImpostors[idxImpostor].scale = object.scale * treeModelInfo[selectedTreeType].imposterScale;
+								idImpostors[idxImpostor].color = object.color;
+								idxImpostor++;
+							}
 						}
 					}
 				}
@@ -428,10 +435,9 @@ public:
 		for (int x = -dim / 2; x < dim / 2; x++) {
 			for (int y = -dim / 2; y < dim / 2; y++) {
 				glm::vec3 worldPos = glm::vec3(round(center.x) + x * scale, 0.0f, round(center.z) + y * scale);
-				//if (!frustum.checkSphere(worldPos, 10.0f)) {
-				//	//idGrass[idx].scale = glm::vec3(0.0f);
-				//	continue;
-				//}
+				if (!frustum.checkSphere(worldPos, 5.0f)) {
+					continue;
+				}
 				// @todo: store random number for each terrain chunk pos at chunk generation and use that instead of calculating
 				float rndVal = gold_noise(glm::vec2(worldPos.x, worldPos.z), worldPos.x + worldPos.z * (float)dim);
 				float h = 0.0f;
@@ -484,7 +490,7 @@ public:
 				VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &drawBatches.trees.instanceBuffers[currentFrameIndex], bufferSize));
 				drawBatches.trees.instanceBuffers[currentFrameIndex].map();
 			}
-			drawBatches.trees.model = &models.trees[0];
+			drawBatches.trees.model = &treeModelInfo[selectedTreeType].models.model;
 			drawBatches.trees.instanceBuffers[currentFrameIndex].elements = countFull;
 			if ((countFull > 0) && (drawBatches.trees.instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE)) {
 				VkDeviceSize bufferSize = countFull * sizeof(InstanceData);
@@ -507,7 +513,7 @@ public:
 				VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &drawBatch->instanceBuffers[currentFrameIndex], bufferSize));
 				drawBatch->instanceBuffers[currentFrameIndex].map();
 			}
-			drawBatch->model = &models.trees[1];
+			drawBatch->model = &treeModelInfo[selectedTreeType].models.imposter;
 			drawBatch->instanceBuffers[currentFrameIndex].elements = countImpostor;
 			if ((countImpostor > 0) && (drawBatch->instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE)) {
 				VkDeviceSize bufferSize = countImpostor * sizeof(InstanceData);
@@ -605,6 +611,16 @@ public:
 		// @todo
 		camera.setPosition(glm::vec3(1678.54f, -11.8125f, -660.64));
 		camera.rotate(-76.25f, 0.5f);
+
+		camera.setPosition(glm::vec3(1668.9f, -6.30803f, -775.78f));
+		camera.rotate(38.25f, 4.125f);
+
+		camera.setPosition(glm::vec3(1669.95f, -6.48352f, -752.265f));
+		camera.rotate(-33.375f, 3.5f);
+
+		camera.setPosition(glm::vec3(1669.95f, -6.58321f, -750.727f));
+		camera.yaw = -30.625f;
+		camera.pitch = 4.625f;
 
 		camera.update(0.0f);
 		frustum.update(camera.matrices.perspective * camera.matrices.view);
@@ -899,7 +915,7 @@ public:
 		}
 
 		// Trees
-		if ((renderTrees) && (drawType != SceneDrawType::sceneDrawTypeRefract) && (drawBatches.trees.instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE)) {
+		if ((renderTrees) && (drawType != SceneDrawType::sceneDrawTypeRefract) && (drawBatches.trees.instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE) && (drawBatches.trees.instanceBuffers[currentFrameIndex].elements > 0)) {
 			vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
 			const VkDeviceSize offsets[1] = { 0 };
 
@@ -919,6 +935,9 @@ public:
 
 			std::vector<DrawBatch*> batches = { &drawBatches.trees, &drawBatches.treeImpostors };
 			for (auto& drawBatch : batches) {
+				if (drawBatch->instanceBuffers[currentFrameIndex].elements <= 0) {
+					continue;
+				}
 				vkCmdBindVertexBuffers(cb->handle, 0, 1, &drawBatch->model->vertices.buffer, offsets);
 				vkCmdBindIndexBuffer(cb->handle, drawBatch->model->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
 				vkCmdBindVertexBuffers(cb->handle, 1, 1, &drawBatch->instanceBuffers[currentFrameIndex].buffer, offsets);
@@ -933,7 +952,7 @@ public:
 		}
 
 		// Grass
-		if (renderGrass && (drawBatches.grass.instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE)) {
+		if (renderGrass && (drawType != SceneDrawType::sceneDrawTypeRefract) && (drawBatches.grass.instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE) && (drawBatches.grass.instanceBuffers[currentFrameIndex].elements > 0)) {
 			vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
 			const VkDeviceSize offsets[1] = { 0 };
 
@@ -1298,10 +1317,16 @@ public:
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
 //		models.grass.loadFromFile(getAssetPath() + "scenes/grasspatch.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
 		models.grass.loadFromFile(getAssetPath() + "scenes/grasspatch_medium.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
-		models.trees.resize(treeModels.size());
-		for (size_t i = 0; i < treeModels.size(); i++) {
-			models.trees[i].loadFromFile(getAssetPath() + "scenes/trees/" + treeModels[i], vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
+
+		const std::vector<float> imposterScales = { 0.65f, 1.0f, 1.0f, 1.0f };
+		treeModelInfo.resize(treeTypes.size());
+		for (size_t i = 0; i < treeTypes.size(); i++) {
+			treeModelInfo[i].name = treeTypes[i];
+			treeModelInfo[i].models.model.loadFromFile(getAssetPath() + "scenes/trees/" + treeTypes[i] + "/" + treeTypes[i] + ".gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
+			treeModelInfo[i].models.imposter.loadFromFile(getAssetPath() + "scenes/trees/" + treeTypes[i] + "_imposter/" + treeTypes[i] + "_imposter.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
+			treeModelInfo[i].imposterScale = imposterScales[i];
 		}
+
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere2.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		//loadTerrainSet("grid");
@@ -2224,7 +2249,8 @@ public:
 		updateParamsReq |= ImGui::ColorEdit4("Water color", heightMapSettings.waterColor);
 		updateParamsReq |= ImGui::ColorEdit4("Fog color", heightMapSettings.fogColor);
 
-		overlay->comboBox("Tree type", &heightMapSettings.treeModelIndex, treeModels);
+		// @todo
+		//overlay->comboBox("Tree type", &heightMapSettings.treeModelIndex, treeModels);
 		overlay->sliderInt("Tree density", &heightMapSettings.treeDensity, 1, 64);
 		overlay->sliderInt("Grass density", &heightMapSettings.grassDensity, 1, 512);
 		overlay->sliderFloat("Min. tree size", &heightMapSettings.minTreeSize, 0.1f, heightMapSettings.maxTreeSize);
@@ -2268,14 +2294,21 @@ public:
 
 	virtual void keyPressed(uint32_t key)
 	{
-		float m = (GetKeyState(VK_SHIFT) & 0x8000) ? -1.0f : 1.0f;
-		if (key == 88) {
-			camera.setPosition(camera.position + glm::vec3(m * 240.0f, 0.0f, 0.0f));
-			viewChanged();
+		if (key == KEY_F) {
+			fixFrustum = !fixFrustum;
 		}
-		if (key == 89) {
-			camera.setPosition(camera.position + glm::vec3(0.0f, 0.0f, m * 240.0f));
-			viewChanged();
+		if (key == KEY_F2) {
+			selectedTreeType++;
+			if (selectedTreeType >= treeModelInfo.size()) {
+				selectedTreeType = 0;
+			}
+		}
+		if (key == KEY_F3) {
+			renderShadows = !renderShadows;
+		}
+		if (key == KEY_F5) {
+			std::cout << camera.position.x << " " << camera.position.y << " " << camera.position.z << "\n";
+			std::cout << camera.pitch << " " << camera.yaw <<  "\n";
 		}
 	}
 
