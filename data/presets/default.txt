@@ -4,9 +4,10 @@ heightScale 28.5
 persistence 0.5
 lacunarity 1.87
 treeDensity 30
+grassDensity 90
 minTreeSize 0.75
 maxTreeSize 1.5
-treeModelIndex 2
+treeType spruce
 textureLayers[0].start 0.038
 textureLayers[0].range 0.038
 textureLayers[1].start 0.0
@@ -26,3 +27,6 @@ fogColor.r 120
 fogColor.g 128
 fogColor.b 171
 skySphere 2
+grassDim 175
+grassScale 0.5
+terrainSet defaults

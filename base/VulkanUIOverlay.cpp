@@ -247,9 +247,6 @@ namespace vks
 		VkPipelineMultisampleStateCreateInfo multisampleState =
 			vks::initializers::pipelineMultisampleStateCreateInfo(rasterizationSamples);
 
-		// @todo: control from setting
-		multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_4_BIT;
-
 		std::vector<VkDynamicState> dynamicStateEnables = {
 			VK_DYNAMIC_STATE_VIEWPORT,
 			VK_DYNAMIC_STATE_SCISSOR

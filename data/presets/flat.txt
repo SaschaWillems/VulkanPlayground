@@ -4,6 +4,7 @@ heightScale 5.947
 persistence 0.5
 lacunarity 1.87
 treeDensity 30
+grassDensity 90
 minTreeSize 1.0
 maxTreeSize 2.5
 treeModelIndex 7
@@ -19,9 +20,12 @@ textureLayers[4].start 0.772
 textureLayers[4].range 0.273
 textureLayers[5].start 0.696
 textureLayers[5].range 0.000
-waterColor.r 157
-waterColor.g 168
-waterColor.b 149
+_waterColor.r 157
+_waterColor.g 168
+_waterColor.b 149
+waterColor.r 255
+waterColor.g 255
+waterColor.b 255
 fogColor.r 128
 fogColor.g 168
 fogColor.b 196
