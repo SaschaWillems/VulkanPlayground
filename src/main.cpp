@@ -435,7 +435,7 @@ public:
 		for (int x = -dim / 2; x < dim / 2; x++) {
 			for (int y = -dim / 2; y < dim / 2; y++) {
 				glm::vec3 worldPos = glm::vec3(round(center.x) + x * scale, 0.0f, round(center.z) + y * scale);
-				if (!frustum.checkSphere(worldPos, 5.0f)) {
+				if (!frustum.checkSphere(worldPos, 10.0f)) {
 					continue;
 				}
 				// @todo: store random number for each terrain chunk pos at chunk generation and use that instead of calculating

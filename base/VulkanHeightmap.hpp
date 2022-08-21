@@ -109,13 +109,6 @@ namespace vks
 				height = 0.0f;
 			}
 			return height;
-
-			//glm::ivec2 rpos = glm::ivec2(x, y) * glm::ivec2(scale);
-			//rpos.x = std::max(0, std::min(rpos.x, (int)chunkSize - 1));
-			//rpos.y = std::max(0, std::min(rpos.y, (int)chunkSize - 1));
-			//rpos /= glm::ivec2(scale);
-			//float height = heights[rpos.x][rpos.y] * scale * heightScale;
-			//return height;
 		}
 
 		float getRandomValue(uint32_t x, uint32_t y)
