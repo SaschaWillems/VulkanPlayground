@@ -1919,6 +1919,8 @@ public:
 		depthStencilState.depthWriteEnable = VK_TRUE;
 		blendAttachmentState.blendEnable = VK_FALSE;
 
+		multisampleState.alphaToCoverageEnable = VK_FALSE;
+
 		// Shadow map depth pass
 		colorBlendState.attachmentCount = 0;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
@@ -2288,24 +2290,24 @@ public:
 		// @todo
 		//overlay->comboBox("Tree type", &heightMapSettings.treeModelIndex, treeModels);
 		overlay->sliderInt("Tree density", &heightMapSettings.treeDensity, 1, 64);
-		overlay->sliderInt("Grass density", &heightMapSettings.grassDensity, 1, 512);
+		//overlay->sliderInt("Grass density", &heightMapSettings.grassDensity, 1, 512);
 		overlay->sliderFloat("Min. tree size", &heightMapSettings.minTreeSize, 0.1f, heightMapSettings.maxTreeSize);
 		overlay->sliderFloat("Max. tree size", &heightMapSettings.maxTreeSize, heightMapSettings.minTreeSize, 5.0f);
+		overlay->comboBox("Tree type", &selectedTreeType, treeTypes);
+		overlay->comboBox("Grass type", &selectedGrassType, grassTypes);
 		//overlay->sliderInt("LOD", &heightMapSettings.levelOfDetail, 1, 6);
 		if (overlay->button("Update heightmap")) {
+			infiniteTerrain.clear();
 			updateHeightmap();
 		}
 		if (overlay->comboBox("Load preset", &presetIndex, presets)) {
 			heightMapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
 			loadSkySphere(heightMapSettings.skySphere);
+			loadTerrainSet(heightMapSettings.terrainSet);
 			memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 			infiniteTerrain.clear();
 			updateHeightmap();
 			viewChanged();
-			updateUniformParams();
-			uniformDataParams.waterColor.r = heightMapSettings.waterColor[0];
-			uniformDataParams.waterColor.g = heightMapSettings.waterColor[1];
-			uniformDataParams.waterColor.b = heightMapSettings.waterColor[2];
 		}
 		ImGui::End();
 
