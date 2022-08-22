@@ -1551,7 +1551,7 @@ public:
 
 		// Depth pass
 		depthPass.descriptorSetLayout = new DescriptorSetLayout(device);
-		depthPass.descriptorSetLayout->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT);
+		depthPass.descriptorSetLayout->addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 		depthPass.descriptorSetLayout->create();
 
 		depthPass.pipelineLayout = new PipelineLayout(device);
@@ -1870,15 +1870,6 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthWriteEnable = VK_TRUE;
 
-		blendAttachmentState.blendEnable = VK_FALSE;
-		blendAttachmentState.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-		blendAttachmentState.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-		blendAttachmentState.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-		blendAttachmentState.colorBlendOp = VK_BLEND_OP_ADD;
-		blendAttachmentState.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-		blendAttachmentState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-		blendAttachmentState.alphaBlendOp = VK_BLEND_OP_ADD;
-
 		pipelines.tree = new Pipeline(device);
 		pipelines.tree->setCreateInfo(pipelineCI);
 		pipelines.tree->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
@@ -2091,59 +2082,54 @@ public:
 		}
 
 		// Refraction
-		{
-			cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.refraction.frameBuffer);
-			cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
-			cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-			drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
-			cb->endRenderPass();
-		}
+		cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.refraction.frameBuffer);
+		cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
+		cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
+		drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
+		cb->endRenderPass();
 
 		// Reflection
-		{
-			cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.reflection.frameBuffer);
-			cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
-			cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
-			drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
-			cb->endRenderPass();
-		}
+		cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.reflection.frameBuffer);
+		cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
+		cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
+		drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
+		cb->endRenderPass();
 
 		// Scene
-		{
-			cb->beginRenderPass(renderPass, frameBuffers[currentBuffer]);
-			cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
-			cb->setScissor(0, 0, width, height);
-			drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
+		cb->beginRenderPass(renderPass, frameBuffers[currentBuffer]);
+		cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
+		cb->setScissor(0, 0, width, height);
+		drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
 
-			if (debugDisplayReflection) {
-				uint32_t val0 = 0;
-				cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
-				cb->bindPipeline(pipelines.debug);
-				cb->updatePushConstant(pipelineLayouts.debug, 0, &val0);
-				cb->draw(6, 1, 0, 0);
-			}
-
-			if (debugDisplayRefraction) {
-				uint32_t val1 = 1;
-				cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
-				cb->bindPipeline(pipelines.debug);
-				cb->updatePushConstant(pipelineLayouts.debug, 0, &val1);
-				cb->draw(6, 1, 0, 0);
-			}
-
-			if (cascadeDebug.enabled) {
-				cb->bindDescriptorSets(cascadeDebug.pipelineLayout, { cascadeDebug.descriptorSet }, 0);
-				cb->bindPipeline(cascadeDebug.pipeline);
-				cb->updatePushConstant(cascadeDebug.pipelineLayout, 0, &cascadeDebug.cascadeIndex);
-				cb->draw(6, 1, 0, 0);
-			}
-
-			if (UIOverlay.visible) {
-				drawUI(cb->handle);
-			}
-
-			cb->endRenderPass();
+		if (debugDisplayReflection) {
+			uint32_t val0 = 0;
+			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
+			cb->bindPipeline(pipelines.debug);
+			cb->updatePushConstant(pipelineLayouts.debug, 0, &val0);
+			cb->draw(6, 1, 0, 0);
 		}
+
+		if (debugDisplayRefraction) {
+			uint32_t val1 = 1;
+			cb->bindDescriptorSets(pipelineLayouts.textured, { descriptorSets.debugquad }, 0);
+			cb->bindPipeline(pipelines.debug);
+			cb->updatePushConstant(pipelineLayouts.debug, 0, &val1);
+			cb->draw(6, 1, 0, 0);
+		}
+
+		if (cascadeDebug.enabled) {
+			cb->bindDescriptorSets(cascadeDebug.pipelineLayout, { cascadeDebug.descriptorSet }, 0);
+			cb->bindPipeline(cascadeDebug.pipeline);
+			cb->updatePushConstant(cascadeDebug.pipelineLayout, 0, &cascadeDebug.cascadeIndex);
+			cb->draw(6, 1, 0, 0);
+		}
+
+		if (UIOverlay.visible) {
+			drawUI(cb->handle);
+		}
+
+		cb->endRenderPass();
+
 		cb->end();
 	}
 
