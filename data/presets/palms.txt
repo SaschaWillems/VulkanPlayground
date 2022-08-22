@@ -30,3 +30,4 @@ skySphere 4
 grassDim 75
 grassScale 1.0
 terrainSet desert
+grassType grasspatch

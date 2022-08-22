@@ -29,6 +29,9 @@ public:
 	~DescriptorSet() {
 		// @todo
 	}
+	bool empty() {
+		return (descriptors.size() == 0);
+	}
 	void create() {
 		VkDescriptorSetAllocateInfo descriptorSetAI = vks::initializers::descriptorSetAllocateInfo(pool->handle, layouts.data(), static_cast<uint32_t>(layouts.size()));
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAI, &handle));

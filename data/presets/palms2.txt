@@ -26,5 +26,9 @@ waterColor.b 255
 fogColor.r 231
 fogColor.g 189
 fogColor.b 98
+grassColor.r 231
+grassColor.g 189
+grassColor.b 98
 skySphere 4
 terrainSet default2
+grassType grasspatch

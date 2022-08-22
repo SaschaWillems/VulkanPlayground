@@ -29,4 +29,4 @@ fogColor.b 171
 skySphere 2
 grassDim 175
 grassScale 0.5
-terrainSet defaults
+terrainSet default

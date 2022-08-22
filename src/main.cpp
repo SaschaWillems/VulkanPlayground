@@ -1,5 +1,5 @@
 /*
- * Vulkan Playground
+ * Vulkan Playground - Procedurally generated terrain
  *
  * Copyright (C) Sascha Willems - www.saschawillems.de
  *
@@ -67,8 +67,10 @@ public:
 	bool renderShadows = false;
 	bool renderTrees = true;
 	bool renderGrass = true;
+	bool renderTerrain = true;
 	bool fixFrustum = false;
 	bool hasExtMemoryBudget = false;
+	bool stickToTerrain = false;
 
 	struct MemoryBudget {
 		int heapCount;
@@ -97,12 +99,18 @@ public:
 		} models;
 	};
 	int selectedTreeType = 0;
+	int selectedGrassType = 0;
 
+	const std::vector<float> imposterScales = { 0.65f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	const std::vector<std::string> treeTypes = {
-		"spruce", "fir", "tropical", "tropical2"
+		"spruce", "fir", "tropical", "tropical2", "palm", "coconut_palm"
+	};
+	const std::vector<std::string> grassTypes = {
+		"grasspatch", "grasspatch_medium", "grasspatch_large"
 	};
 
 	std::vector<TreeModelInfo> treeModelInfo;
+	std::vector<vkglTF::Model> grassModels;
 
 	const std::vector<std::string> presets = {
 		"default",
@@ -153,7 +161,6 @@ public:
 	struct Models {
 		vkglTF::Model skysphere;
 		vkglTF::Model plane;
-		vkglTF::Model grass;
 	} models;
 
 	struct UBO {
@@ -184,6 +191,7 @@ public:
 		uint32_t shadowPCF = 1;
 		glm::vec4 fogColor;
 		glm::vec4 waterColor;
+		glm::vec4 grassColor = glm::vec4(69.0f, 98.0f, 31.0f, 1.0f) / 255.0f;
 		glm::vec4 layers[TERRAIN_LAYER_COUNT];
 	} uniformDataParams;
 
@@ -212,10 +220,10 @@ public:
 		DescriptorSet* waterplane;
 		DescriptorSet* debugquad;
 		DescriptorSet* terrain = nullptr;
-		DescriptorSet* skysphere;
-		DescriptorSet* sceneMatrices;
-		DescriptorSet* sceneParams;
-		DescriptorSet* shadowCascades;
+		DescriptorSet* skysphere = nullptr;
+		DescriptorSet* sceneMatrices = nullptr;
+		DescriptorSet* sceneParams = nullptr;
+		DescriptorSet* shadowCascades = nullptr;
 	} descriptorSets;
 
 	struct {
@@ -440,11 +448,11 @@ public:
 				}
 				// @todo: store random number for each terrain chunk pos at chunk generation and use that instead of calculating
 				float rndVal = gold_noise(glm::vec2(worldPos.x, worldPos.z), worldPos.x + worldPos.z * (float)dim);
+				float rndValB = gold_noise(glm::vec2(worldPos.z, worldPos.x), worldPos.x * worldPos.z / (float)dim);
 				float h = 0.0f;
 				float r = 0.0f;
-				worldPos.x += rndVal;
-				worldPos.z -= rndVal;
-				// @todo
+				worldPos.x += rndVal;// *2.0f - rndValB * 2.0f;
+				worldPos.z -= rndVal;// *2.0f - rndValB * 2.0f;
 				infiniteTerrain.getHeightAndRandomValue(worldPos, h, r);
 				if ((abs(h) <= heightMapSettings.waterPosition) || (abs(h) > 12.0f)) {
 					continue;
@@ -452,7 +460,7 @@ public:
 				idGrass[idx].scale = glm::vec3(1.0f + rndVal * 0.15f, 0.5f + rndVal * 0.25f, 1.0f + rndVal * 0.15f);
 				idGrass[idx].rotation = glm::vec3(M_PI * rndVal * 0.035f, M_PI * rndVal * 360.0f, M_PI * rndVal * -0.035f);
 				idGrass[idx].uv = glm::vec2((float)((int)(round(rndVal * 5.0f)) % 4) * 0.25f, 0.0f);
-				idGrass[idx].uv.s = 0.75f; // @todo
+				//idGrass[idx].uv.s = 0.75f; // @todo: looks nicer in certain scenarios (e.g. default)
 				idGrass[idx].pos = worldPos;
 				idGrass[idx].color = glm::vec4(0.6f + rndVal * 0.4f);
 				float d = glm::distance(worldPos, camera.position);
@@ -537,7 +545,7 @@ public:
 				VK_CHECK_RESULT(VulkanContext::device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &drawBatch->instanceBuffers[currentFrameIndex], bufferSize));
 				drawBatch->instanceBuffers[currentFrameIndex].map();
 			}
-			drawBatch->model = &models.grass;
+			drawBatch->model = &grassModels[selectedGrassType];
 			drawBatch->instanceBuffers[currentFrameIndex].elements = countGrassActual;
 			if ((countGrassActual > 0) && (drawBatch->instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE)) {
 				VkDeviceSize bufferSize = countGrassActual * sizeof(InstanceData);
@@ -600,7 +608,7 @@ public:
 		camera.setPerspective(45.0f, (float)width / (float)height, zNear, zFar);
 		camera.movementSpeed = 7.5f * 5.0f;
 		camera.rotationSpeed = 0.1f;
-		settings.overlay = false;
+		settings.overlay = true;
 		timerSpeed *= 0.05f;
 
 		camera.setPosition(glm::vec3(0.0f, -25.0f, 0.0f));
@@ -618,9 +626,9 @@ public:
 		camera.setPosition(glm::vec3(1669.95f, -6.48352f, -752.265f));
 		camera.rotate(-33.375f, 3.5f);
 
-		camera.setPosition(glm::vec3(1669.95f, -6.58321f, -750.727f));
-		camera.yaw = -30.625f;
-		camera.pitch = 4.625f;
+		//camera.setPosition(glm::vec3(1669.95f, -6.58321f, -750.727f));
+		//camera.yaw = -30.625f;
+		//camera.pitch = 4.625f;
 
 		camera.update(0.0f);
 		frustum.update(camera.matrices.perspective * camera.matrices.view);
@@ -639,7 +647,9 @@ public:
 		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-		heightMapSettings.loadFromFile(getAssetPath() + "presets/flat.txt");
+		//loadHeightMapSettings("default");
+		//loadHeightMapSettings("palms");
+		loadHeightMapSettings("palms2");
 //		heightMapSettings.loadFromFile(getAssetPath() + "presets/default2.txt");
 		memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 
@@ -648,6 +658,23 @@ public:
 #endif
 
 		//numThreads = std::thread::hardware_concurrency();
+	}
+
+	void loadHeightMapSettings(std::string name) 
+	{
+		heightMapSettings.loadFromFile(getAssetPath() + "presets/" + name + ".txt");
+		for (size_t i = 0; i < treeTypes.size(); i++) {
+			if (heightMapSettings.treeType == treeTypes[i]) {
+				selectedTreeType = i;
+				break;
+			}
+		}
+		for (size_t i = 0; i < grassTypes.size(); i++) {
+			if (heightMapSettings.grassType == grassTypes[i]) {
+				selectedGrassType = i;
+				break;
+			}
+		}
 	}
 
 	~VulkanExample()
@@ -861,35 +888,40 @@ public:
 
 		// Terrain
 		// @todo: rework pipeline binding
-		if (displayWireFrame) {
-			cb->bindPipeline(pipelines.wireframe);
-		} else {
-			cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
-		}
-		cb->bindDescriptorSets(pipelineLayouts.terrain, 
-			{ descriptorSets.terrain,
-				frameObjects[currentFrameIndex].uniformBuffers.shared.descriptorSet,
-				frameObjects[currentFrameIndex].uniformBuffers.params.descriptorSet,
-				frameObjects[currentFrameIndex].uniformBuffers.CSM.descriptorSet },
-			0);
-		for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
-			if (terrainChunk->visible && (terrainChunk->state == TerrainChunk::State::generated)) {
-				pushConst.alpha = terrainChunk->alpha;
-				if (terrainChunk->alpha < 1.0f) {
-					cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrainBlend);
-				} else {
-					cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
+		if (renderTerrain) {
+			if (displayWireFrame) {
+				cb->bindPipeline(pipelines.wireframe);
+			}
+			else {
+				cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
+			}
+			cb->bindDescriptorSets(pipelineLayouts.terrain,
+				{ descriptorSets.terrain,
+					frameObjects[currentFrameIndex].uniformBuffers.shared.descriptorSet,
+					frameObjects[currentFrameIndex].uniformBuffers.params.descriptorSet,
+					frameObjects[currentFrameIndex].uniformBuffers.CSM.descriptorSet },
+				0);
+			for (auto& terrainChunk : infiniteTerrain.terrainChunks) {
+				if (terrainChunk->visible && (terrainChunk->state == TerrainChunk::State::generated)) {
+					pushConst.alpha = terrainChunk->alpha;
+					if (terrainChunk->alpha < 1.0f) {
+						cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrainBlend);
+					}
+					else {
+						cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
+					}
+					cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
+					glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
+					if (drawType == SceneDrawType::sceneDrawTypeReflect) {
+						pos.y += heightMapSettings.waterPosition * 2.0f;
+						vkCmdSetCullMode(cb->handle, VK_CULL_MODE_BACK_BIT);
+					}
+					else {
+						vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
+					}
+					vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
+					terrainChunk->draw(cb);
 				}
-				cb->updatePushConstant(pipelineLayouts.terrain, 0, &pushConst);
-				glm::vec3 pos = glm::vec3((float)terrainChunk->position.x, 0.0f, (float)terrainChunk->position.y) * glm::vec3(chunkDim - 1.0f, 0.0f, chunkDim - 1.0f);
-				if (drawType == SceneDrawType::sceneDrawTypeReflect) {
-					pos.y += heightMapSettings.waterPosition * 2.0f;
-					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_BACK_BIT);
-				} else {
-					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_FRONT_BIT);
-				}
-				vkCmdPushConstants(cb->handle, pipelineLayouts.terrain->handle, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 96, sizeof(glm::vec3), &pos);
-				terrainChunk->draw(cb);
 			}
 		}
 
@@ -1185,8 +1217,8 @@ public:
 		sampler.maxLod = 1.0f;
 		sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
 		// @todo
-		//sampler.compareEnable = VK_TRUE;
-		//sampler.compareOp = VK_COMPARE_OP_LESS;
+		sampler.compareEnable = VK_TRUE;
+		sampler.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &depth.sampler));
 	}
 
@@ -1292,14 +1324,19 @@ public:
 
 	void loadSkySphere(const std::string filename)
 	{
-		vkQueueWaitIdle(queue);
-		textures.skySphere.destroy();
+		if (textures.skySphere.image != VK_NULL_HANDLE) {
+			vkQueueWaitIdle(queue);
+			textures.skySphere.destroy();
+		}
 		textures.skySphere.loadFromFile(getAssetPath() + "textures/" + filename, VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
-		descriptorSets.skysphere->updateDescriptor(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.skySphere.descriptor);
+		if ((descriptorSets.skysphere) && (!descriptorSets.skysphere->empty())) {
+			descriptorSets.skysphere->updateDescriptor(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.skySphere.descriptor);
+		}
 	}
 	
 	void loadTerrainSet(const std::string name)
 	{
+
 		const std::string path = getAssetPath() + "textures/terrainsets/" + name + "/";
 		std::vector<std::string> filenames;
 		for (int i = 0; i < 6; i++) {
@@ -1315,22 +1352,28 @@ public:
 	{
 		models.skysphere.loadFromFile(getAssetPath() + "scenes/geosphere.gltf", vulkanDevice, queue);
 		models.plane.loadFromFile(getAssetPath() + "scenes/plane.gltf", vulkanDevice, queue);
-//		models.grass.loadFromFile(getAssetPath() + "scenes/grasspatch.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
-		models.grass.loadFromFile(getAssetPath() + "scenes/grasspatch_medium.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
+//		models.grass.loadFromFile(getAssetPath() + "scenes/grasspatch_medium.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
 
-		const std::vector<float> imposterScales = { 0.65f, 1.0f, 1.0f, 1.0f };
+		const int fileLoadingFlags = vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices;
+
 		treeModelInfo.resize(treeTypes.size());
 		for (size_t i = 0; i < treeTypes.size(); i++) {
 			treeModelInfo[i].name = treeTypes[i];
-			treeModelInfo[i].models.model.loadFromFile(getAssetPath() + "scenes/trees/" + treeTypes[i] + "/" + treeTypes[i] + ".gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
-			treeModelInfo[i].models.imposter.loadFromFile(getAssetPath() + "scenes/trees/" + treeTypes[i] + "_imposter/" + treeTypes[i] + "_imposter.gltf", vulkanDevice, queue, vkglTF::FileLoadingFlags::FlipY | vkglTF::FileLoadingFlags::PreTransformVertices);
+			treeModelInfo[i].models.model.loadFromFile(getAssetPath() + "scenes/trees/" + treeTypes[i] + "/" + treeTypes[i] + ".gltf", vulkanDevice, queue, fileLoadingFlags);
+			treeModelInfo[i].models.imposter.loadFromFile(getAssetPath() + "scenes/trees/" + treeTypes[i] + "_imposter/" + treeTypes[i] + "_imposter.gltf", vulkanDevice, queue, fileLoadingFlags);
 			treeModelInfo[i].imposterScale = imposterScales[i];
 		}
 
-		textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere2.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		grassModels.resize(grassTypes.size());
+		for (size_t i = 0; i < grassTypes.size(); i++) {
+			grassModels[i].loadFromFile(getAssetPath() + "scenes/" + grassTypes[i] + ".gltf", vulkanDevice, queue, fileLoadingFlags);
+		}
+
+		//textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere2.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		loadSkySphere(heightMapSettings.skySphere);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		//loadTerrainSet("grid");
-		loadTerrainSet("default");
+		loadTerrainSet(heightMapSettings.terrainSet);
 
 		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
 
@@ -1954,6 +1997,7 @@ public:
 		uniformDataParams.shadows = renderShadows;
 		uniformDataParams.fogColor = glm::vec4(heightMapSettings.fogColor[0], heightMapSettings.fogColor[1], heightMapSettings.fogColor[2], 1.0f);
 		uniformDataParams.waterColor = glm::vec4(heightMapSettings.waterColor[0], heightMapSettings.waterColor[1], heightMapSettings.waterColor[2], 1.0f);
+		uniformDataParams.grassColor = glm::vec4(heightMapSettings.grassColor[0], heightMapSettings.grassColor[1], heightMapSettings.grassColor[2], 1.0f);
 		memcpy(frameObjects[currentFrameIndex].uniformBuffers.params.mapped, &uniformDataParams, sizeof(UniformDataParams));
 	}
 
@@ -2123,6 +2167,13 @@ public:
 
 		VulkanExampleBase::prepareFrame(currentFrame);
 
+		if (stickToTerrain) {
+			float h = 0.0f;
+			float r = 0.0f;
+			infiniteTerrain.getHeightAndRandomValue(camera.position, h, r);
+			camera.position.y = h - 3.0f;
+		}
+
 		updateCascades();
 		updateUniformBuffers();
 		updateUniformParams();
@@ -2153,8 +2204,6 @@ public:
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
-		bool updateParamsReq = false;
-
 		ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Info", nullptr, ImGuiWindowFlags_None);
@@ -2219,11 +2268,11 @@ public:
 		ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiSetCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Render options", nullptr, ImGuiWindowFlags_None);
-		updateParamsReq |= overlay->checkBox("Fog", &uniformDataParams.fog);
-		updateParamsReq |= overlay->checkBox("Shadows", &renderShadows);
+		overlay->checkBox("Fog", &uniformDataParams.fog);
+		overlay->checkBox("Shadows", &renderShadows);
 		overlay->checkBox("Trees", &renderTrees);
 		overlay->checkBox("Grass", &renderGrass);
-		updateParamsReq |= overlay->checkBox("Alpha discard", &uniformDataParams.alphaDiscard);
+		overlay->checkBox("Alpha discard", &uniformDataParams.alphaDiscard);
 		if (overlay->sliderFloat("Chunk draw distance", &heightMapSettings.maxChunkDrawDistance, 0.0f, 1024.0f)) {
 			infiniteTerrain.updateViewDistance(heightMapSettings.maxChunkDrawDistance);
 		}
@@ -2233,7 +2282,7 @@ public:
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Terrain layers", nullptr, ImGuiWindowFlags_None);
 		for (uint32_t i = 0; i < TERRAIN_LAYER_COUNT; i++) {
-			updateParamsReq |= overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uniformDataParams.layers[i].x, uniformDataParams.layers[i].y, 0.0f, 1.0f);
+			overlay->sliderFloat2(("##layer_x" + std::to_string(i)).c_str(), uniformDataParams.layers[i].x, uniformDataParams.layers[i].y, 0.0f, 1.0f);
 		}
 		ImGui::End();
 
@@ -2246,8 +2295,9 @@ public:
 		overlay->sliderFloat("Persistence", &heightMapSettings.persistence, 0.0f, 10.0f);
 		overlay->sliderFloat("Lacunarity", &heightMapSettings.lacunarity, 0.0f, 10.0f);
 		
-		updateParamsReq |= ImGui::ColorEdit4("Water color", heightMapSettings.waterColor);
-		updateParamsReq |= ImGui::ColorEdit4("Fog color", heightMapSettings.fogColor);
+		ImGui::ColorEdit4("Water color", heightMapSettings.waterColor);
+		ImGui::ColorEdit4("Fog color", heightMapSettings.fogColor);
+		ImGui::ColorEdit4("Grass color", heightMapSettings.grassColor);
 
 		// @todo
 		//overlay->comboBox("Tree type", &heightMapSettings.treeModelIndex, treeModels);
@@ -2279,11 +2329,6 @@ public:
 		overlay->sliderInt("Patch dimension", &heightMapSettings.grassDim, 1, 512);
 		overlay->sliderFloat("Patch scale", &heightMapSettings.grassScale, 0.25f, 2.5f);
 		ImGui::End();
-
-		if (updateParamsReq) {
-			vkQueueWaitIdle(queue);
-			updateUniformParams();
-		}
 	}
 
 	virtual void mouseMoved(double x, double y, bool& handled)
@@ -2306,7 +2351,19 @@ public:
 		if (key == KEY_F3) {
 			renderShadows = !renderShadows;
 		}
+		if (key == KEY_F4) {
+			renderGrass = !renderGrass;
+		}
 		if (key == KEY_F5) {
+			renderTerrain = !renderTerrain;
+		}
+		if (key == KEY_F6) {
+			displayWaterPlane = !displayWaterPlane;
+		}
+		if (key == KEY_F7) {
+			stickToTerrain = !stickToTerrain;
+		}
+		if (key == KEY_F8) {
 			std::cout << camera.position.x << " " << camera.position.y << " " << camera.position.z << "\n";
 			std::cout << camera.pitch << " " << camera.yaw <<  "\n";
 		}

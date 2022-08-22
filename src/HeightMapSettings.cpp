@@ -17,8 +17,8 @@ void HeightMapSettings::loadFromFile(const std::string filename)
 	assert(file.is_open());
 	std::string line;
 	std::string key;
-	float value;
-	std::map<std::string, float> settings{};
+	std::string value;
+	std::map<std::string, std::string> settings{};
 	while (file.good()) {
 		getline(file, line);
 		std::istringstream ss(line);
@@ -27,64 +27,88 @@ void HeightMapSettings::loadFromFile(const std::string filename)
 	}
 	file.close();
 	if (settings.find("noiseScale") != settings.end()) {
-		noiseScale = settings["noiseScale"];
+		noiseScale = std::stof(settings["noiseScale"]);
 	}
 	if (settings.find("seed") != settings.end()) {
-		seed = (int)settings["seed"];
+		seed = std::stoi(settings["seed"]);
 	}
 	if (settings.find("heightScale") != settings.end()) {
-		heightScale = settings["heightScale"];
+		heightScale = std::stof(settings["heightScale"]);
 	}
 	if (settings.find("persistence") != settings.end()) {
-		persistence = settings["persistence"];
+		persistence = std::stof(settings["persistence"]);
 	}
-	if (settings.find("persistence") != settings.end()) {
-		persistence = settings["persistence"];
+	if (settings.find("lacunarity") != settings.end()) {
+		lacunarity = std::stof(settings["lacunarity"]);
 	}
 	if (settings.find("treeDensity") != settings.end()) {
-		treeDensity = (int)settings["treeDensity"];
+		treeDensity = std::stoi(settings["treeDensity"]);
 	}
 	if (settings.find("grassDensity") != settings.end()) {
-		grassDensity = (int)settings["grassDensity"];
+		grassDensity = std::stoi(settings["grassDensity"]);
 	}
 	if (settings.find("treeModelIndex") != settings.end()) {
-		treeModelIndex = (int)settings["treeModelIndex"];
+		treeModelIndex = std::stoi(settings["treeModelIndex"]);
+	}
+	if (settings.find("treeType") != settings.end()) {
+		treeType = settings["treeType"];
 	}
 	if (settings.find("minTreeSize") != settings.end()) {
-		minTreeSize = settings["minTreeSize"];
+		minTreeSize = std::stof(settings["minTreeSize"]);
 	}
 	if (settings.find("maxTreeSize") != settings.end()) {
-		maxTreeSize = settings["maxTreeSize"];
+		maxTreeSize = std::stof(settings["maxTreeSize"]);
 	}
 	if (settings.find("waterColor.r") != settings.end()) {
-		waterColor[0] = settings["waterColor.r"] / 255.0f;
+		waterColor[0] = std::stof(settings["waterColor.r"]) / 255.0f;
 	}
 	if (settings.find("waterColor.g") != settings.end()) {
-		waterColor[1] = settings["waterColor.g"] / 255.0f;
+		waterColor[1] = std::stof(settings["waterColor.g"]) / 255.0f;
 	}
 	if (settings.find("waterColor.b") != settings.end()) {
-		waterColor[2] = settings["waterColor.b"] / 255.0f;
+		waterColor[2] = std::stof(settings["waterColor.b"]) / 255.0f;
 	}
 	if (settings.find("fogColor.r") != settings.end()) {
-		fogColor[0] = settings["fogColor.r"] / 255.0f;
+		fogColor[0] = std::stof(settings["fogColor.r"]) / 255.0f;
 	}
 	if (settings.find("fogColor.g") != settings.end()) {
-		fogColor[1] = settings["fogColor.g"] / 255.0f;
+		fogColor[1] = std::stof(settings["fogColor.g"]) / 255.0f;
 	}
 	if (settings.find("fogColor.b") != settings.end()) {
-		fogColor[2] = settings["fogColor.b"] / 255.0f;
+		fogColor[2] = std::stof(settings["fogColor.b"]) / 255.0f;
+	}
+	if (settings.find("grassColor.r") != settings.end()) {
+		grassColor[0] = std::stof(settings["grassColor.r"]) / 255.0f;
+	}
+	if (settings.find("grassColor.g") != settings.end()) {
+		grassColor[1] = std::stof(settings["grassColor.g"]) / 255.0f;
+	}
+	if (settings.find("grassColor.b") != settings.end()) {
+		grassColor[2] = std::stof(settings["grassColor.b"]) / 255.0f;
 	}
 	if (settings.find("skySphere") != settings.end()) {
-		const int idx = (int)settings["skySphere"];
+		const int idx = std::stoi(settings["skySphere"]);
 		skySphere = "skysphere" + std::to_string(idx) + ".ktx";
+	}
+	if (settings.find("grassDim") != settings.end()) {
+		grassDim = std::stoi(settings["grassDim"]);
+	}
+	if (settings.find("grassScale") != settings.end()) {
+		grassScale = std::stof(settings["grassScale"]);
+	}
+	if (settings.find("terrainSet") != settings.end()) {
+		terrainSet = settings["terrainSet"];
+	}
+	if (settings.find("grassType") != settings.end()) {
+		grassType = settings["grassType"];
 	}
 	for (int i = 0; i < TERRAIN_LAYER_COUNT; i++) {
 		const std::string id = "textureLayers[" + std::to_string(i) + "]";
 		if (settings.find(id + ".start") != settings.end()) {
-			textureLayers[i].x = settings[id + ".start"];
+			textureLayers[i].x = std::stof(settings[id + ".start"]);
 		}
 		if (settings.find(id + ".range") != settings.end()) {
-			textureLayers[i].y = settings[id + ".range"];
+			textureLayers[i].y = std::stof(settings[id + ".range"]);
 		}
 	}
 }

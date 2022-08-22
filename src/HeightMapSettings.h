@@ -37,7 +37,11 @@ public:
 	glm::vec4 textureLayers[TERRAIN_LAYER_COUNT];
 	float waterColor[3];
 	float fogColor[3] = { 0.47f, 0.5f, 0.67f };
+	float grassColor[3] = { 0.27f, 0.38f, 0.12f };
 	std::string skySphere = "skysphere01.ktx";
+	std::string treeType = "spruce";
+	std::string terrainSet = "default";
+	std::string grassType = "grasspatch_medium";
 
 	int grassDim = 175; // 256;
 	float grassScale = 0.5f; // @todo
