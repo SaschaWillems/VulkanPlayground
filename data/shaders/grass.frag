@@ -50,22 +50,23 @@ void main(void)
 
 	// Lighting
 	float amb = 0.5;
-	vec3 N = normalize(inNormal);
-	vec3 L = normalize(inLightVec);
-	vec3 V = normalize(inViewVec);
-	vec3 R = reflect(-L, N);
-	vec3 diffuse = max(dot(N, L), amb).rrr;
-	const float specular = 0.0f; //pow(max(dot(R, V), 0.0), 32.0);
+//	vec3 N = normalize(inNormal);
+//	vec3 L = normalize(inLightVec);
+//	vec3 V = normalize(inViewVec);
+//	vec3 R = reflect(-L, N);
+//	vec3 diffuse = max(dot(N, L), amb).rrr;
+//	const float specular = 0.0f; //pow(max(dot(R, V), 0.0), 32.0);
+//
+//	vec3 color = (ambient + (shadow * diffuse)) * colorMap.rgb * gColor;
 
-	vec3 gColor = vec3(69.0, 98.0, 31.0) / 255.0;
-	vec3 color = (ambient + (shadow * diffuse)) * colorMap.rgb * gColor;
+	vec3 color = colorMap.rgb * shadow * params.grassColor.rgb;
 
 //	vec3 color = vec3(diffuse * colorMap.rgb + specular);
-	if (params.fog == 1) {
+//	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color), colorMap.a);
-	} else {
-		outFragColor = vec4(color, colorMap.a);
-	}
+//	} else {
+		//outFragColor = vec4(color, colorMap.a);
+//	}
 
 //	outFragColor.a *= clamp(pushConsts.alpha, 0.0, 1.0);
 
