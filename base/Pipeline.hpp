@@ -13,7 +13,6 @@
 #include "VulkanInitializers.hpp"
 #include "VulkanTools.h"
 #include "PipelineLayout.hpp"
-#include "RenderPass.hpp"
 
 class Pipeline {
 private:
@@ -21,7 +20,6 @@ private:
 	VkPipeline pso = VK_NULL_HANDLE;
 	VkPipelineBindPoint bindPoint;
 	PipelineLayout* layout = nullptr;
-	RenderPass* renderPass;
 	VkGraphicsPipelineCreateInfo pipelineCI;
 	VkPipelineCache cache;
 	std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
@@ -39,7 +37,6 @@ public:
 		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCI.pStages = shaderStages.data();
 		pipelineCI.layout = layout->handle;
-		pipelineCI.renderPass = renderPass->handle;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, cache, 1, &pipelineCI, nullptr, &pso));
 	}
 	void addShader(std::string filename) {
@@ -68,9 +65,6 @@ public:
 	void setLayout(PipelineLayout* layout) {
 		this->layout = layout;
 	}
-	void setRenderPass(RenderPass* renderPass) {
-		this->renderPass = renderPass;
-	}
 	void setCreateInfo(VkGraphicsPipelineCreateInfo pipelineCI) {
 		this->pipelineCI = pipelineCI;
 		this->bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -88,6 +82,9 @@ public:
 		if (sampleCount != VK_SAMPLE_COUNT_1_BIT) {
 			pMultisampleState->alphaToCoverageEnable = VK_TRUE;
 		}
+	}
+	void setpNext(void* pNext) {
+		this->pipelineCI.pNext = pNext;
 	}
 	VkPipelineBindPoint getBindPoint() {
 		return bindPoint;

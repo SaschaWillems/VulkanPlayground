@@ -10,6 +10,7 @@ struct UBOParams {
 	uint shadowPCF;
 	vec4 fogColor;
 	vec4 waterColor;
+	vec4 grassColor;
 	vec4 layers[6];
 };
 
@@ -26,4 +27,5 @@ struct UBOShadowCascades {
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	mat4 inverseViewMat;
 	vec4 lightDir;
+	mat4 biasMat;
 };

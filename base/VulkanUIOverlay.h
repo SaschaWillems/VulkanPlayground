@@ -39,6 +39,7 @@ namespace vks
 		VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 		uint32_t subpass = 0;
 
+		// @todo: make buffers per-frame!
 		vks::Buffer vertexBuffer;
 		vks::Buffer indexBuffer;
 		int32_t vertexCount = 0;
@@ -69,7 +70,7 @@ namespace vks
 		UIOverlay();
 		~UIOverlay();
 
-		void preparePipeline(const VkPipelineCache pipelineCache, const VkRenderPass renderPass);
+		void preparePipeline(const VkPipelineCache pipelineCache, VkFormat colorFormat, VkFormat depthFormat);
 		void prepareResources();
 
 		bool update();
@@ -84,9 +85,23 @@ namespace vks
 		bool checkBox(const char* caption, uint32_t* value);
 		bool inputFloat(const char* caption, float* value, float step, uint32_t precision);
 		bool sliderFloat(const char* caption, float* value, float min, float max);
+		bool sliderFloat2(const char* caption, float& value0, float& value1, float min, float max);
 		bool sliderInt(const char* caption, int32_t* value, int32_t min, int32_t max);
 		bool comboBox(const char* caption, int32_t* itemindex, std::vector<std::string> items);
 		bool button(const char* caption);
 		void text(const char* formatstr, ...);
+
+		// @todo: for new sync
+
+		// Checks if the vertex and/or index buffers need to be recreated
+		bool bufferUpdateRequired();
+		// (Re)allocate vertex and index buffers
+		void allocateBuffers();
+		// Updates the vertex and index buffers with ImGui's current frame data
+		void updateBuffers();
+
+		// @todo
+		void setSampleCount(VkSampleCountFlagBits sampleCount);
+		void setSubpass(uint32_t subpass);
 	};
 }

@@ -3,13 +3,6 @@
  * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
  */
 
-const mat4 biasMat = mat4( 
-	0.5, 0.0, 0.0, 0.0,
-	0.0, 0.5, 0.0, 0.0,
-	0.0, 0.0, 1.0, 0.0,
-	0.5, 0.5, 0.0, 1.0 
-);
-
 float textureProj(vec4 shadowCoord, vec2 offset, uint cascadeIndex, sampler2DArray shadowCascades)
 {
 	float shadow = 1.0;
@@ -55,7 +48,7 @@ float shadowMapping(vec4 dist, vec3 pos, sampler2DArray shadowCascades)
 	}
 
 	// Depth compare for shadowing
-	vec4 shadowCoord = (biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(pos.xyz + dist.xyz, 1.0);	
+	vec4 shadowCoord = (uboCSM.biasMat * uboCSM.cascadeViewProjMat[cascadeIndex]) * vec4(pos.xyz + dist.xyz, 1.0);	
 
 #define _PCF
 

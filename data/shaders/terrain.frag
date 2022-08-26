@@ -84,11 +84,11 @@ void main()
 	float diffuse = dot(N, L);
 	vec3 color = (ambient + (shadow * diffuse)) * sampleTerrainLayer();
 
-	if (params.fog == 1) {
+//	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color), 1.0);
-	} else {
-		outFragColor = vec4(color, 1.0);
-	}
-
+//	} else {
+//		outFragColor = vec4(color, 1.0);
+//	}
+//
 	outFragColor.a = clamp(pushConsts.alpha, 0.0, 1.0);
 }

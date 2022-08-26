@@ -1,7 +1,7 @@
 /*
 * UI overlay class using ImGui
 *
-* Copyright (C) 2017 by Sascha Willems - www.saschawillems.de
+* Copyright (C) 2017-2021 by Sascha Willems - www.saschawillems.de
 *
 * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 */
@@ -207,7 +207,7 @@ namespace vks
 	}
 
 	/** Prepare a separate pipeline for the UI overlay rendering decoupled from the main application */
-	void UIOverlay::preparePipeline(const VkPipelineCache pipelineCache, const VkRenderPass renderPass)
+	void UIOverlay::preparePipeline(const VkPipelineCache pipelineCache, VkFormat colorFormat, VkFormat depthFormat)
 	{
 		// Pipeline layout
 		// Push constants for UI rendering parameters
@@ -247,6 +247,9 @@ namespace vks
 		VkPipelineMultisampleStateCreateInfo multisampleState =
 			vks::initializers::pipelineMultisampleStateCreateInfo(rasterizationSamples);
 
+		// @todo
+		multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_4_BIT;
+
 		std::vector<VkDynamicState> dynamicStateEnables = {
 			VK_DYNAMIC_STATE_VIEWPORT,
 			VK_DYNAMIC_STATE_SCISSOR
@@ -254,8 +257,16 @@ namespace vks
 		VkPipelineDynamicStateCreateInfo dynamicState =
 			vks::initializers::pipelineDynamicStateCreateInfo(dynamicStateEnables);
 
-		VkGraphicsPipelineCreateInfo pipelineCreateInfo = vks::initializers::pipelineCreateInfo(pipelineLayout, renderPass);
+		// New create info to define color, depth and stencil attachments at pipeline create time
+		VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
+		pipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+		pipelineRenderingCreateInfo.colorAttachmentCount = 1;
+		pipelineRenderingCreateInfo.pColorAttachmentFormats = &colorFormat;
+		pipelineRenderingCreateInfo.depthAttachmentFormat = depthFormat;
+		pipelineRenderingCreateInfo.stencilAttachmentFormat = depthFormat;
 
+		VkGraphicsPipelineCreateInfo pipelineCreateInfo = vks::initializers::pipelineCreateInfo();
+		pipelineCreateInfo.layout = pipelineLayout;
 		pipelineCreateInfo.pInputAssemblyState = &inputAssemblyState;
 		pipelineCreateInfo.pRasterizationState = &rasterizationState;
 		pipelineCreateInfo.pColorBlendState = &colorBlendState;
@@ -266,6 +277,7 @@ namespace vks
 		pipelineCreateInfo.stageCount = static_cast<uint32_t>(shaders.size());
 		pipelineCreateInfo.pStages = shaders.data();
 		pipelineCreateInfo.subpass = subpass;
+		pipelineCreateInfo.pNext = &pipelineRenderingCreateInfo;
 
 		// Vertex bindings an attributes based on ImGui vertex definition
 		std::vector<VkVertexInputBindingDescription> vertexInputBindings = {
@@ -288,6 +300,7 @@ namespace vks
 	}
 
 	/** Update vertex and index buffer containing the imGui elements when required */
+	// @todo: remove
 	bool UIOverlay::update()
 	{
 		ImDrawData* imDrawData = ImGui::GetDrawData();
@@ -304,6 +317,13 @@ namespace vks
 			return false;
 		}
 
+		// @todo: comment
+		// @todo: wait for fences? vkGetFenceStatus
+		//if ((vertexCount != imDrawData->TotalVtxCount) || (indexCount != imDrawData->TotalIdxCount)) {
+		//	vkQueueWaitIdle(queue);
+		//}
+
+		/*
 		// Vertex buffer
 		if ((vertexBuffer.buffer == VK_NULL_HANDLE) || (vertexCount != imDrawData->TotalVtxCount)) {
 			vertexBuffer.unmap();
@@ -325,6 +345,7 @@ namespace vks
 			indexBuffer.map();
 			updateCmdBuffers = true;
 		}
+		*/
 
 		// Upload data
 		ImDrawVert* vtxDst = (ImDrawVert*)vertexBuffer.mapped;
@@ -347,6 +368,11 @@ namespace vks
 
 	void UIOverlay::draw(const VkCommandBuffer commandBuffer)
 	{
+		// @todo: move to calling function
+		if (!visible) {
+			return;
+		}
+
 		ImDrawData* imDrawData = ImGui::GetDrawData();
 		int32_t vertexOffset = 0;
 		int32_t indexOffset = 0;
@@ -356,6 +382,11 @@ namespace vks
 		}
 
 		ImGuiIO& io = ImGui::GetIO();
+
+		const VkViewport viewport = vks::initializers::viewport(io.DisplaySize.x, io.DisplaySize.y, 0.0f, 1.0f);
+		const VkRect2D scissor = vks::initializers::rect2D((int32_t)io.DisplaySize.x, (int32_t)io.DisplaySize.y, 0, 0);
+		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
@@ -501,4 +532,92 @@ namespace vks
 		ImGui::TextV(formatstr, args);
 		va_end(args);
 	}
+
+	bool UIOverlay::bufferUpdateRequired()
+	{
+		ImDrawData* imDrawData = ImGui::GetDrawData();
+		if (!imDrawData) { 
+			return false; 
+		};
+
+		// Note: Alignment is done inside buffer creation
+		VkDeviceSize vertexBufferSize = imDrawData->TotalVtxCount * sizeof(ImDrawVert);
+		VkDeviceSize indexBufferSize = imDrawData->TotalIdxCount * sizeof(ImDrawIdx);
+
+		if ((vertexBufferSize == 0) || (indexBufferSize == 0)) {
+			return false;
+		}
+
+		// We only check if the buffers are too small, so we don't resize if all vertices and indices fit in the already allocated buffer space
+		if ((vertexCount < imDrawData->TotalVtxCount) || (indexCount < imDrawData->TotalIdxCount)) {
+			return true;
+		}
+
+		return false;
+	}
+
+	void UIOverlay::allocateBuffers()
+	{
+		ImDrawData* imDrawData = ImGui::GetDrawData();
+		if (!imDrawData) {
+			return;
+		};
+
+		// Vertex buffer
+		VkDeviceSize vertexBufferSize = imDrawData->TotalVtxCount * sizeof(ImDrawVert);
+		if ((vertexBuffer.buffer == VK_NULL_HANDLE) || (imDrawData->TotalVtxCount > vertexCount)) {
+			vertexBuffer.unmap();
+			vertexBuffer.destroy();
+			VK_CHECK_RESULT(device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertexBuffer, vertexBufferSize));
+			vertexCount = imDrawData->TotalVtxCount;
+			vertexBuffer.map();
+		}
+
+		// Index buffer
+		VkDeviceSize indexBufferSize = imDrawData->TotalIdxCount * sizeof(ImDrawIdx);
+		if ((indexBuffer.buffer == VK_NULL_HANDLE) || (imDrawData->TotalIdxCount > indexCount)) {
+			indexBuffer.unmap();
+			indexBuffer.destroy();
+			VK_CHECK_RESULT(device->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &indexBuffer, indexBufferSize));
+			indexCount = imDrawData->TotalIdxCount;
+			indexBuffer.map();
+		}
+	}
+
+	void UIOverlay::updateBuffers()
+	{
+		ImDrawData* imDrawData = ImGui::GetDrawData();
+		if (!imDrawData) { 
+			return; 
+		};
+
+		// Upload current frame data to vertex and index buffer
+		if (imDrawData->CmdListsCount > 0) {
+			ImDrawVert* vtxDst = (ImDrawVert*)vertexBuffer.mapped;
+			ImDrawIdx* idxDst = (ImDrawIdx*)indexBuffer.mapped;
+
+			for (int n = 0; n < imDrawData->CmdListsCount; n++) {
+				const ImDrawList* cmd_list = imDrawData->CmdLists[n];
+				memcpy(vtxDst, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
+				memcpy(idxDst, cmd_list->IdxBuffer.Data, cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx));
+				vtxDst += cmd_list->VtxBuffer.Size;
+				idxDst += cmd_list->IdxBuffer.Size;
+			}
+
+			// Flush to make buffer writes visible to GPU
+			vertexBuffer.flush();
+			indexBuffer.flush();
+		}
+	}
+
+	void UIOverlay::setSampleCount(VkSampleCountFlagBits sampleCount)
+	{
+		rasterizationSamples = sampleCount;
+	}
+
+	void UIOverlay::setSubpass(uint32_t subpass)
+	{
+		this->subpass = subpass;
+	}
+
 }

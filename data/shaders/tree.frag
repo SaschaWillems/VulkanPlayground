@@ -67,11 +67,11 @@ void main(void)
     color = colorMap.rgb * shadow * 0.75;
 
 	// @todo: doesn't seem to work, check param block binding
-	if (params.fog == 1) {
+//	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color), colorMap.a);
-	} else {
-		outFragColor = vec4(color, colorMap.a);
-	}
+//	} else {
+//		outFragColor = vec4(color, colorMap.a);
+//	}
 
 	vec2 texSize = vec2(1.0) / textureSize(samplerColorMap, 0);
 	float _Cutoff = 0.15;

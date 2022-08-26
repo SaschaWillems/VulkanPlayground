@@ -1,18 +1,10 @@
 /*
  * Vulkan Playground - Procedurally generated terrain
  *
- * Copyright (C) Sascha Willems - www.saschawillems.de
+ * Copyright (C) 2022 Sascha Willems - www.saschawillems.de
  *
  * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
  */
-
-/*
-@todos:
-- Descriptor rework (separate sets)
-- Per-frame ubos
-- level of detail
-- Better culling
-*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,13 +26,11 @@
 #include "VulkanglTFModel.h"
 #include "VulkanBuffer.hpp"
 #include "VulkanHeightmap.hpp"
-//#include "threadpool.hpp"
 
 #include "Pipeline.hpp"
 #include "PipelineLayout.hpp"
 #include "DescriptorSet.hpp"
 #include "DescriptorSetLayout.hpp"
-#include "RenderPass.hpp"
 #include "DescriptorPool.hpp"
 #include "Image.hpp"
 #include "ImageView.hpp"
@@ -63,7 +53,6 @@ public:
 	bool debugDisplayReflection = false;
 	bool debugDisplayRefraction = false;
 	bool displayWaterPlane = true;
-	bool displayWireFrame = false;
 	bool renderShadows = false;
 	bool renderTrees = true;
 	bool renderGrass = true;
@@ -79,16 +68,12 @@ public:
 		std::chrono::time_point<std::chrono::high_resolution_clock> lastUpdate;
 	} memoryBudget{};
 
-	//vks::HeightMap* heightMap;
 	InfiniteTerrain infiniteTerrain;
 
 	glm::vec4 lightPos;
 
-	//uint32_t numThreads;
-	//vks::ThreadPool threadPool;
-
 	enum class SceneDrawType { sceneDrawTypeRefract, sceneDrawTypeReflect, sceneDrawTypeDisplay };
-	enum class FramebufferType { Color, DepthStencil };
+	enum class ImageType { Color, DepthStencil };
 
 	struct TreeModelInfo {
 		std::string name;
@@ -141,7 +126,6 @@ public:
 		Pipeline* skyOffscreen;
 		Pipeline* depthpass;
 		Pipeline* depthpassTree;
-		Pipeline* wireframe;
 		Pipeline* tree;
 		Pipeline* treeOffscreen;
 		Pipeline* grass;
@@ -237,17 +221,14 @@ public:
 		DescriptorSetLayout* shadowCascades;
 	} descriptorSetLayouts;
 
-	// Framebuffer for offscreen rendering
-	struct FrameBufferAttachment {
-		VkFramebuffer frameBuffer;
+	struct OffscreenImage {
 		ImageView* view;
 		Image* image;
 		VkDescriptorImageInfo descriptor;
 	};
 	struct OffscreenPass {
 		int32_t width, height;
-		FrameBufferAttachment reflection, refraction, depth;
-		RenderPass* renderPass;
+		OffscreenImage reflection, refraction, depth;
 		VkSampler sampler;
 	} offscreenPass;
 
@@ -260,7 +241,6 @@ public:
 
 	// Resources of the depth map generation pass
 	struct DepthPass {
-		RenderPass* renderPass;
 		PipelineLayout* pipelineLayout;
 		VkPipeline pipeline;
 		DescriptorSetLayout* descriptorSetLayout;
@@ -286,7 +266,6 @@ public:
 	};
 	std::array<Cascade, SHADOW_MAP_CASCADE_COUNT> cascades;
 	VkImageView cascadesView;
-	VkFramebuffer cascadesFramebuffer;
 
 	std::mutex lock_guard;
 	std::mutex lock_guard_2;
@@ -443,9 +422,6 @@ public:
 		for (int x = -dim / 2; x < dim / 2; x++) {
 			for (int y = -dim / 2; y < dim / 2; y++) {
 				glm::vec3 worldPos = glm::vec3(round(center.x) + x * scale, 0.0f, round(center.z) + y * scale);
-				if (!frustum.checkSphere(worldPos, 10.0f)) {
-					continue;
-				}
 				// @todo: store random number for each terrain chunk pos at chunk generation and use that instead of calculating
 				float rndVal = gold_noise(glm::vec2(worldPos.x, worldPos.z), worldPos.x + worldPos.z * (float)dim);
 				float rndValB = gold_noise(glm::vec2(worldPos.z, worldPos.x), worldPos.x * worldPos.z / (float)dim);
@@ -457,11 +433,15 @@ public:
 				if ((abs(h) <= heightMapSettings.waterPosition) || (abs(h) > 12.0f)) {
 					continue;
 				}
+				idGrass[idx].pos = worldPos;
+				idGrass[idx].pos.y = h;
+				if (!frustum.checkSphere(idGrass[idx].pos, 10.0f)) {
+					continue;
+				}
 				idGrass[idx].scale = glm::vec3(1.0f + rndVal * 0.15f, 0.5f + rndVal * 0.25f, 1.0f + rndVal * 0.15f);
 				idGrass[idx].rotation = glm::vec3(M_PI * rndVal * 0.035f, M_PI * rndVal * 360.0f, M_PI * rndVal * -0.035f);
 				idGrass[idx].uv = glm::vec2((float)((int)(round(rndVal * 5.0f)) % 4) * 0.25f, 0.0f);
 				//idGrass[idx].uv.s = 0.75f; // @todo: looks nicer in certain scenarios (e.g. default)
-				idGrass[idx].pos = worldPos;
 				idGrass[idx].color = glm::vec4(0.6f + rndVal * 0.4f);
 				float d = glm::distance(worldPos, camera.position);
 				idGrass[idx].color.a = 1.0f;
@@ -470,7 +450,6 @@ public:
 					float alpha = ((adim - d) / farea);
 					idGrass[idx].color.a = alpha;
 				}
-				idGrass[idx].pos.y = h;
 				idx++;
 				countGrassActual++;
 			}
@@ -648,8 +627,8 @@ public:
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
 		//loadHeightMapSettings("default");
-		//loadHeightMapSettings("palms");
 		loadHeightMapSettings("palms2");
+		//loadHeightMapSettings("palms");
 //		heightMapSettings.loadFromFile(getAssetPath() + "presets/default2.txt");
 		memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 
@@ -680,20 +659,21 @@ public:
 	~VulkanExample()
 	{
 		vkDestroySampler(device, offscreenPass.sampler, nullptr);
+		// @todo: wait for detachted threads to finish (maybe use atomic active thread counter)
 	}
 
-	void createFrameBufferImage(FrameBufferAttachment& target, FramebufferType type)
+	void createImage(OffscreenImage& target, ImageType type)
 	{
 		VkFormat format = VK_FORMAT_UNDEFINED;
 		VkImageAspectFlags aspectMask;
 		VkImageUsageFlags usageFlags;
 		switch (type) {
-		case FramebufferType::Color:
+		case ImageType::Color:
 			format = swapChain.colorFormat;
 			usageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 			aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 			break;
-		case FramebufferType::DepthStencil:
+		case ImageType::DepthStencil:
 			VkBool32 validDepthFormat = vks::tools::getSupportedDepthFormat(physicalDevice, &format);
 			usageFlags = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 			aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
@@ -719,88 +699,16 @@ public:
 		target.descriptor = { offscreenPass.sampler, target.view->handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	}
 
-	// Setup the offscreen framebuffer for rendering the mirrored scene
-	// The color attachment of this framebuffer will then be used to sample from in the fragment shader of the final pass
+	// Setup the offscreen images for rendering reflection and refractions
 	void prepareOffscreen()
 	{
-		// Find a suitable depth format
-		VkFormat fbDepthFormat;
-		VkBool32 validDepthFormat = vks::tools::getSupportedDepthFormat(physicalDevice, &fbDepthFormat);
-		assert(validDepthFormat);
-
-		VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-		VkAttachmentReference depthReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-		offscreenPass.renderPass = new RenderPass(device);
-		offscreenPass.renderPass->setDimensions(FB_DIM, FB_DIM);
-
-		offscreenPass.renderPass->addSubpassDescription({
-			0,
-			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			0,
-			nullptr,
-			1,
-			&colorReference,
-			nullptr,
-			&depthReference,
-			0,
-			nullptr
-		});
-
-		// Color attachment
-		offscreenPass.renderPass->addAttachmentDescription({
-			0,
-			swapChain.colorFormat,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-		});
-		// Depth attachment
-		offscreenPass.renderPass->addAttachmentDescription({
-			0,
-			fbDepthFormat,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-		});
-		// Subpass dependencies
-		offscreenPass.renderPass->addSubpassDependency({
-			VK_SUBPASS_EXTERNAL,
-			0,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			VK_ACCESS_SHADER_READ_BIT,
-			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-		});
-		offscreenPass.renderPass->addSubpassDependency({
-			0,
-			VK_SUBPASS_EXTERNAL,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			VK_ACCESS_SHADER_READ_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-		});
-
-		offscreenPass.renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
-		offscreenPass.renderPass->setDepthStencilClearValue(1, 1.0f, 0);
-		offscreenPass.renderPass->create();
-
 		offscreenPass.width = FB_DIM;
 		offscreenPass.height = FB_DIM;
 
-		/* Renderpass */
-	
-		/* Shared sampler */
+		// Find a suitable depth format
+		VkFormat fbDepthFormat;
+		VkBool32 validDepthFormat = vks::tools::getSupportedDepthFormat(physicalDevice, &fbDepthFormat);
+		assert(validDepthFormat);		
 
 		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
 		samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -816,29 +724,9 @@ public:
 		samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
 		VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &offscreenPass.sampler));
 
-		/* Framebuffer images */
-
-		createFrameBufferImage(offscreenPass.refraction, FramebufferType::Color);
-		createFrameBufferImage(offscreenPass.reflection, FramebufferType::Color);
-		createFrameBufferImage(offscreenPass.depth, FramebufferType::DepthStencil);
-
-		/* Framebuffers */
-
-		VkImageView attachments[2];
-		attachments[0] = offscreenPass.refraction.view->handle;
-		attachments[1] = offscreenPass.depth.view->handle;
-
-		VkFramebufferCreateInfo frameBufferCI = vks::initializers::framebufferCreateInfo();
-		frameBufferCI.renderPass = offscreenPass.renderPass->handle;
-		frameBufferCI.attachmentCount = 2;
-		frameBufferCI.pAttachments = attachments;
-		frameBufferCI.width = offscreenPass.width;
-		frameBufferCI.height = offscreenPass.height;
-		frameBufferCI.layers = 1;
-		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &offscreenPass.refraction.frameBuffer));
-
-		attachments[0] = offscreenPass.reflection.view->handle;
-		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &offscreenPass.reflection.frameBuffer));
+		createImage(offscreenPass.refraction, ImageType::Color);
+		createImage(offscreenPass.reflection, ImageType::Color);
+		createImage(offscreenPass.depth, ImageType::DepthStencil);
 	}
 
 	void drawScene(CommandBuffer* cb, SceneDrawType drawType)
@@ -889,12 +777,7 @@ public:
 		// Terrain
 		// @todo: rework pipeline binding
 		if (renderTerrain) {
-			if (displayWireFrame) {
-				cb->bindPipeline(pipelines.wireframe);
-			}
-			else {
-				cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
-			}
+			cb->bindPipeline(offscreen ? pipelines.terrainOffscreen : pipelines.terrain);
 			cb->bindDescriptorSets(pipelineLayouts.terrain,
 				{ descriptorSets.terrain,
 					frameObjects[currentFrameIndex].uniformBuffers.shared.descriptorSet,
@@ -1040,20 +923,19 @@ public:
 			}
 		}
 		// Trees
-		if (renderTrees && drawBatches.trees.instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE) {
-
-			vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
-			const VkDeviceSize offsets[1] = { 0 };
-
-			DrawBatch* drawBatch = &drawBatches.trees;
-//			cb->bindDescriptorSets(depthPass.pipelineLayout, { depthPass.descriptorSet }, 0);
-			cb->bindPipeline(pipelines.depthpassTree);
-			vkCmdBindVertexBuffers(cb->handle, 1, 1, &drawBatch->instanceBuffers[currentFrameIndex].buffer, offsets);
-			pushConstPos = glm::vec4(0.0f);
-			cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConstPos);
-			drawBatch->model->draw(cb->handle, vkglTF::RenderFlags::BindImages, depthPass.pipelineLayout->handle, 1, drawBatch->instanceBuffers[currentFrameIndex].elements);
-
-			// @todo: impostors?
+		if (renderTrees) {
+			std::vector<DrawBatch*> batches = { &drawBatches.trees, &drawBatches.treeImpostors };
+			for (auto drawBatch : batches) {
+				if (drawBatches.trees.instanceBuffers[currentFrameIndex].buffer != VK_NULL_HANDLE) {
+					vkCmdSetCullMode(cb->handle, VK_CULL_MODE_NONE);
+					const VkDeviceSize offsets[1] = { 0 };
+					cb->bindPipeline(pipelines.depthpassTree);
+					vkCmdBindVertexBuffers(cb->handle, 1, 1, &drawBatch->instanceBuffers[currentFrameIndex].buffer, offsets);
+					pushConstPos = glm::vec4(0.0f);
+					cb->updatePushConstant(depthPass.pipelineLayout, 0, &pushConstPos);
+					drawBatch->model->draw(cb->handle, vkglTF::RenderFlags::BindImages, depthPass.pipelineLayout->handle, 1, drawBatch->instanceBuffers[currentFrameIndex].elements);
+				}
+			}
 		}
 	}
 
@@ -1072,65 +954,65 @@ public:
 
 		VkAttachmentReference depthReference = { 0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
 
-		depthPass.renderPass = new RenderPass(device);
-		depthPass.renderPass->setDimensions(SHADOWMAP_DIM, SHADOWMAP_DIM);
-		depthPass.renderPass->addSubpassDescription({
-			0,
-			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			0,
-			nullptr,
-			0,
-			nullptr,
-			nullptr,
-			&depthReference,
-			0,
-			nullptr
-			});
-		// Depth attachment
-		depthPass.renderPass->addAttachmentDescription({
-			0,
-			depthFormat,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-			});
-		// Subpass dependencies
-		depthPass.renderPass->addSubpassDependency({
-			VK_SUBPASS_EXTERNAL,
-			0,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-			VK_ACCESS_SHADER_READ_BIT,
-			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-			});
-		depthPass.renderPass->addSubpassDependency({
-			0,
-			VK_SUBPASS_EXTERNAL,
-			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-			VK_ACCESS_SHADER_READ_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-			});
+		//depthPass.renderPass = new RenderPass(device);
+		//depthPass.renderPass->setDimensions(SHADOWMAP_DIM, SHADOWMAP_DIM);
+		//depthPass.renderPass->addSubpassDescription({
+		//	0,
+		//	VK_PIPELINE_BIND_POINT_GRAPHICS,
+		//	0,
+		//	nullptr,
+		//	0,
+		//	nullptr,
+		//	nullptr,
+		//	&depthReference,
+		//	0,
+		//	nullptr
+		//	});
+		//// Depth attachment
+		//depthPass.renderPass->addAttachmentDescription({
+		//	0,
+		//	depthFormat,
+		//	VK_SAMPLE_COUNT_1_BIT,
+		//	VK_ATTACHMENT_LOAD_OP_CLEAR,
+		//	VK_ATTACHMENT_STORE_OP_STORE,
+		//	VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		//	VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		//	VK_IMAGE_LAYOUT_UNDEFINED,
+		//	VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+		//	});
+		//// Subpass dependencies
+		//depthPass.renderPass->addSubpassDependency({
+		//	VK_SUBPASS_EXTERNAL,
+		//	0,
+		//	VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		//	VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+		//	VK_ACCESS_SHADER_READ_BIT,
+		//	VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+		//	VK_DEPENDENCY_BY_REGION_BIT,
+		//	});
+		//depthPass.renderPass->addSubpassDependency({
+		//	0,
+		//	VK_SUBPASS_EXTERNAL,
+		//	VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+		//	VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		//	VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+		//	VK_ACCESS_SHADER_READ_BIT,
+		//	VK_DEPENDENCY_BY_REGION_BIT,
+		//	});
 
-		const uint32_t viewMask = 0b00001111;
-		const uint32_t correlationMask = 0b00001111;
+		//const uint32_t viewMask = 0b00001111;
+		//const uint32_t correlationMask = 0b00001111;
 
-		VkRenderPassMultiviewCreateInfo renderPassMultiviewCI{};
-		renderPassMultiviewCI.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
-		renderPassMultiviewCI.subpassCount = 1;
-		renderPassMultiviewCI.pViewMasks = &viewMask;
-		renderPassMultiviewCI.correlationMaskCount = 1;
-		renderPassMultiviewCI.pCorrelationMasks = &correlationMask;
+		//VkRenderPassMultiviewCreateInfo renderPassMultiviewCI{};
+		//renderPassMultiviewCI.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
+		//renderPassMultiviewCI.subpassCount = 1;
+		//renderPassMultiviewCI.pViewMasks = &viewMask;
+		//renderPassMultiviewCI.correlationMaskCount = 1;
+		//renderPassMultiviewCI.pCorrelationMasks = &correlationMask;
 
-		depthPass.renderPass->setMultiview(renderPassMultiviewCI);
-		depthPass.renderPass->setDepthStencilClearValue(0, 1.0f, 0);
-		depthPass.renderPass->create();
+		//depthPass.renderPass->setMultiview(renderPassMultiviewCI);
+		//depthPass.renderPass->setDepthStencilClearValue(0, 1.0f, 0);
+		//depthPass.renderPass->create();
 
 		/*
 			Layered depth image and views
@@ -1152,25 +1034,10 @@ public:
 		depth.view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, SHADOW_MAP_CASCADE_COUNT });
 		depth.view->create();
 
-		// One image and framebuffer per cascade
-		//for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
-		//	// Image view for this cascade's layer (inside the depth map) this view is used to render to that specific depth image layer
-		//	cascades[i].view = new ImageView(vulkanDevice);
-		//	cascades[i].view->setImage(depth.image);
-		//	cascades[i].view->setType(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
-		//	cascades[i].view->setFormat(depthFormat);
-		//	cascades[i].view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, i, 1 });
-		//	cascades[i].view->create();
-		//	// Framebuffer
-		//	VkFramebufferCreateInfo framebufferInfo = vks::initializers::framebufferCreateInfo();
-		//	framebufferInfo.renderPass = depthPass.renderPass->handle;
-		//	framebufferInfo.attachmentCount = 1;
-		//	framebufferInfo.pAttachments = &cascades[i].view->handle;
-		//	framebufferInfo.width = SHADOWMAP_DIM;
-		//	framebufferInfo.height = SHADOWMAP_DIM;
-		//	framebufferInfo.layers = 1;
-		//	VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cascades[i].frameBuffer));
-		//}
+		VkCommandBuffer cb = VulkanContext::device->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		vks::tools::setImageLayout(cb, depth.image->handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, { VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, SHADOW_MAP_CASCADE_COUNT });
+		// @todo: VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+		VulkanContext::device->flushCommandBuffer(cb, queue);
 
 		// Image view for this cascade's layer (inside the depth map) this view is used to render to that specific depth image layer
 		VkImageViewCreateInfo imageViewCI = vks::initializers::imageViewCreateInfo();
@@ -1182,26 +1049,6 @@ public:
 		imageViewCI.subresourceRange.layerCount = SHADOW_MAP_CASCADE_COUNT;
 		imageViewCI.image = depth.image->handle;
 		VK_CHECK_RESULT(vkCreateImageView(device, &imageViewCI, nullptr, &cascadesView));
-
-		//cascades[i].view = new ImageView(vulkanDevice);
-		//cascades[i].view->setImage(depth.image);
-		//cascades[i].view->setType(VK_IMAGE_VIEW_TYPE_2D_ARRAY);
-		//cascades[i].view->setFormat(depthFormat);
-		//cascades[i].view->setSubResourceRange({ VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, i, 1 });
-		//cascades[i].view->create();
-		// 
-		// Framebuffer
-		VkImageView attachments[1];
-		attachments[0] = cascadesView;
-
-		VkFramebufferCreateInfo framebufferInfo = vks::initializers::framebufferCreateInfo();
-		framebufferInfo.renderPass = depthPass.renderPass->handle;
-		framebufferInfo.attachmentCount = 1;
-		framebufferInfo.pAttachments = attachments;
-		framebufferInfo.width = SHADOWMAP_DIM;
-		framebufferInfo.height = SHADOWMAP_DIM;
-		framebufferInfo.layers = 1;
-		VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cascadesFramebuffer));
 
 		// Shared sampler for cascade depth reads
 		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
@@ -1216,9 +1063,6 @@ public:
 		sampler.minLod = 0.0f;
 		sampler.maxLod = 1.0f;
 		sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-		// @todo
-		sampler.compareEnable = VK_TRUE;
-		sampler.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &depth.sampler));
 	}
 
@@ -1311,11 +1155,10 @@ public:
 	void drawCSM(CommandBuffer *cb) {
 		// Generate depth map cascades
 		// All cascades are rendered in one pass using a layered depth image and multiview
+
 		cb->setViewport(0, 0, (float)SHADOWMAP_DIM, (float)SHADOWMAP_DIM, 0.0f, 1.0f);
 		cb->setScissor(0, 0, SHADOWMAP_DIM, SHADOWMAP_DIM);
-		cb->beginRenderPass(depthPass.renderPass, cascadesFramebuffer);
 		drawShadowCasters(cb);
-		cb->endRenderPass();
 	}
 
 	/*
@@ -1730,15 +1573,31 @@ public:
 		rasterizationState.cullMode = VK_CULL_MODE_NONE;
 		depthStencilState.depthTestEnable = VK_FALSE;
 
+		// New create info to define color, depth and stencil attachments at pipeline create time
+		VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
+		pipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+		pipelineRenderingCreateInfo.colorAttachmentCount = 1;
+		pipelineRenderingCreateInfo.pColorAttachmentFormats = &swapChain.colorFormat;
+		pipelineRenderingCreateInfo.depthAttachmentFormat = depthFormat;
+		pipelineRenderingCreateInfo.stencilAttachmentFormat = depthFormat;
+
+		// @todo: not required
+		VkPipelineRenderingCreateInfo pipelineRenderingCreateInfoOffscreen{};
+		pipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+		pipelineRenderingCreateInfo.colorAttachmentCount = 1;
+		pipelineRenderingCreateInfo.pColorAttachmentFormats = &swapChain.colorFormat;
+		pipelineRenderingCreateInfo.depthAttachmentFormat = depthFormat;
+		pipelineRenderingCreateInfo.stencilAttachmentFormat = depthFormat;
+
 		// Debug
 		pipelines.debug = new Pipeline(device);
 		pipelines.debug->setCreateInfo(pipelineCI);
 		pipelines.debug->setVertexInputState(&vertexInputStateEmpty);
 		pipelines.debug->setCache(pipelineCache);
 		pipelines.debug->setLayout(pipelineLayouts.debug);
-		pipelines.debug->setRenderPass(renderPass);
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.vert.spv");
 		pipelines.debug->addShader(getAssetPath() + "shaders/quad.frag.spv");
+		pipelines.debug->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.debug->create();
 		// Debug cascades
 		cascadeDebug.pipeline = new Pipeline(device);
@@ -1746,9 +1605,9 @@ public:
 		cascadeDebug.pipeline->setVertexInputState(&vertexInputStateEmpty);
 		cascadeDebug.pipeline->setCache(pipelineCache);
 		cascadeDebug.pipeline->setLayout(cascadeDebug.pipelineLayout);
-		cascadeDebug.pipeline->setRenderPass(renderPass);
 		cascadeDebug.pipeline->addShader(getAssetPath() + "shaders/debug_csm.vert.spv");
 		cascadeDebug.pipeline->addShader(getAssetPath() + "shaders/debug_csm.frag.spv");
+		cascadeDebug.pipeline->setpNext(&pipelineRenderingCreateInfo);
 		cascadeDebug.pipeline->create();
 
 		depthStencilState.depthTestEnable = VK_TRUE;
@@ -1761,9 +1620,9 @@ public:
 		pipelines.water->setVertexInputState(vertexInputStateModel);
 		pipelines.water->setCache(pipelineCache);
 		pipelines.water->setLayout(pipelineLayouts.water);
-		pipelines.water->setRenderPass(renderPass);
 		pipelines.water->addShader(getAssetPath() + "shaders/water.vert.spv");
 		pipelines.water->addShader(getAssetPath() + "shaders/water.frag.spv");
+		pipelines.water->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.water->create();
 		// Offscreen
 		pipelines.waterOffscreen = new Pipeline(device);
@@ -1772,9 +1631,9 @@ public:
 		pipelines.waterOffscreen->setVertexInputState(vertexInputStateModel);
 		pipelines.waterOffscreen->setCache(pipelineCache);
 		pipelines.waterOffscreen->setLayout(pipelineLayouts.water);
-		pipelines.waterOffscreen->setRenderPass(offscreenPass.renderPass);
 		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/water.vert.spv");
 		pipelines.waterOffscreen->addShader(getAssetPath() + "shaders/water.frag.spv");
+		pipelines.waterOffscreen->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.waterOffscreen->create();
 
 		// Terrain
@@ -1786,9 +1645,9 @@ public:
 		pipelines.terrain->setVertexInputState(&vertexInputState);
 		pipelines.terrain->setCache(pipelineCache);
 		pipelines.terrain->setLayout(pipelineLayouts.terrain);
-		pipelines.terrain->setRenderPass(renderPass);
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.vert.spv");
 		pipelines.terrain->addShader(getAssetPath() + "shaders/terrain.frag.spv");
+		pipelines.terrain->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.terrain->create();
 
 		blendAttachmentState.blendEnable = VK_TRUE;
@@ -1805,9 +1664,9 @@ public:
 		pipelines.terrainBlend->setVertexInputState(&vertexInputState);
 		pipelines.terrainBlend->setCache(pipelineCache);
 		pipelines.terrainBlend->setLayout(pipelineLayouts.terrain);
-		pipelines.terrainBlend->setRenderPass(renderPass);
 		pipelines.terrainBlend->addShader(getAssetPath() + "shaders/terrain.vert.spv");
 		pipelines.terrainBlend->addShader(getAssetPath() + "shaders/terrain.frag.spv");
+		pipelines.terrainBlend->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.terrainBlend->create();
 
 		blendAttachmentState.blendEnable = VK_FALSE;
@@ -1821,22 +1680,10 @@ public:
 		pipelines.terrainOffscreen->setVertexInputState(&vertexInputState);
 		pipelines.terrainOffscreen->setCache(pipelineCache);
 		pipelines.terrainOffscreen->setLayout(pipelineLayouts.terrain);
-		pipelines.terrainOffscreen->setRenderPass(offscreenPass.renderPass);
 		pipelines.terrainOffscreen->addShader(getAssetPath() + "shaders/terrain.vert.spv");
 		pipelines.terrainOffscreen->addShader(getAssetPath() + "shaders/terrain.frag.spv");
+		pipelines.terrainOffscreen->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.terrainOffscreen->create();
-		// Wireframe (@todo: offscreen)
-		rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
-		pipelines.wireframe = new Pipeline(device);
-		pipelines.wireframe->setCreateInfo(pipelineCI);
-		pipelines.wireframe->setSampleCount(settings.multiSampling ? settings.sampleCount : VK_SAMPLE_COUNT_1_BIT);
-		pipelines.wireframe->setVertexInputState(&vertexInputState);
-		pipelines.wireframe->setCache(pipelineCache);
-		pipelines.wireframe->setLayout(pipelineLayouts.terrain);
-		pipelines.wireframe->setRenderPass(renderPass);
-		pipelines.wireframe->addShader(getAssetPath() + "shaders/terrain.vert.spv");
-		pipelines.wireframe->addShader(getAssetPath() + "shaders/terrain.frag.spv");
-		pipelines.wireframe->create();
 
 		// Sky
 		rasterizationState.polygonMode = VK_POLYGON_MODE_FILL;
@@ -1848,9 +1695,9 @@ public:
 		pipelines.sky->setVertexInputState(vertexInputStateModel);
 		pipelines.sky->setCache(pipelineCache);
 		pipelines.sky->setLayout(pipelineLayouts.sky);
-		pipelines.sky->setRenderPass(renderPass);
 		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.vert.spv");
 		pipelines.sky->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
+		pipelines.sky->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.sky->create();
 		// Offscreen
 		multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -1860,9 +1707,9 @@ public:
 		pipelines.skyOffscreen->setVertexInputState(vertexInputStateModel);
 		pipelines.skyOffscreen->setCache(pipelineCache);
 		pipelines.skyOffscreen->setLayout(pipelineLayouts.sky);
-		pipelines.skyOffscreen->setRenderPass(offscreenPass.renderPass);
 		pipelines.skyOffscreen->addShader(getAssetPath() + "shaders/skysphere.vert.spv");
 		pipelines.skyOffscreen->addShader(getAssetPath() + "shaders/skysphere.frag.spv");
+		pipelines.skyOffscreen->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.skyOffscreen->create();
 
 		// Trees
@@ -1876,9 +1723,9 @@ public:
 		pipelines.tree->setVertexInputState(&vertexInputStateModelInstanced);
 		pipelines.tree->setCache(pipelineCache);
 		pipelines.tree->setLayout(pipelineLayouts.tree);
-		pipelines.tree->setRenderPass(renderPass);
 		pipelines.tree->addShader(getAssetPath() + "shaders/tree.vert.spv");
 		pipelines.tree->addShader(getAssetPath() + "shaders/tree.frag.spv");
+		pipelines.tree->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.tree->create();
 		// Offscreen
 		pipelines.treeOffscreen = new Pipeline(device);
@@ -1887,9 +1734,9 @@ public:
 		pipelines.treeOffscreen->setVertexInputState(&vertexInputStateModelInstanced);
 		pipelines.treeOffscreen->setCache(pipelineCache);
 		pipelines.treeOffscreen->setLayout(pipelineLayouts.tree);
-		pipelines.treeOffscreen->setRenderPass(offscreenPass.renderPass);
 		pipelines.treeOffscreen->addShader(getAssetPath() + "shaders/tree.vert.spv");
 		pipelines.treeOffscreen->addShader(getAssetPath() + "shaders/tree.frag.spv");
+		pipelines.treeOffscreen->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.treeOffscreen->create();
 
 		// Grass
@@ -1900,9 +1747,9 @@ public:
 		pipelines.grass->setVertexInputState(&vertexInputStateModelInstanced);
 		pipelines.grass->setCache(pipelineCache);
 		pipelines.grass->setLayout(pipelineLayouts.tree);
-		pipelines.grass->setRenderPass(renderPass);
 		pipelines.grass->addShader(getAssetPath() + "shaders/grass.vert.spv");
 		pipelines.grass->addShader(getAssetPath() + "shaders/grass.frag.spv");
+		pipelines.grass->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.grass->create();
 		// Offscreen
 		pipelines.grassOffscreen = new Pipeline(device);
@@ -1911,9 +1758,9 @@ public:
 		pipelines.grassOffscreen->setVertexInputState(&vertexInputStateModelInstanced);
 		pipelines.grassOffscreen->setCache(pipelineCache);
 		pipelines.grassOffscreen->setLayout(pipelineLayouts.tree);
-		pipelines.grassOffscreen->setRenderPass(offscreenPass.renderPass);
 		pipelines.grassOffscreen->addShader(getAssetPath() + "shaders/grass.vert.spv");
 		pipelines.grassOffscreen->addShader(getAssetPath() + "shaders/grass.frag.spv");
+		pipelines.grassOffscreen->setpNext(&pipelineRenderingCreateInfo);
 		pipelines.grassOffscreen->create();
 
 		depthStencilState.depthWriteEnable = VK_TRUE;
@@ -1922,6 +1769,13 @@ public:
 		multisampleState.alphaToCoverageEnable = VK_FALSE;
 
 		// Shadow map depth pass
+
+		VkPipelineRenderingCreateInfo pipelineRenderingCreateInfoDepthPass{};
+		pipelineRenderingCreateInfoDepthPass.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+		pipelineRenderingCreateInfoDepthPass.depthAttachmentFormat = depthFormat;
+		pipelineRenderingCreateInfoDepthPass.stencilAttachmentFormat = depthFormat;
+		pipelineRenderingCreateInfoDepthPass.viewMask = 0b00001111;
+
 		colorBlendState.attachmentCount = 0;
 		depthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		// Enable depth clamp (if available)
@@ -1931,9 +1785,9 @@ public:
 		pipelines.depthpass->setVertexInputState(&vertexInputState);
 		pipelines.depthpass->setCache(pipelineCache);
 		pipelines.depthpass->setLayout(depthPass.pipelineLayout);
-		pipelines.depthpass->setRenderPass(depthPass.renderPass);
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/depthpass.vert.spv");
 		pipelines.depthpass->addShader(getAssetPath() + "shaders/terrain_depthpass.frag.spv");
+		pipelines.depthpass->setpNext(&pipelineRenderingCreateInfoDepthPass);
 		pipelines.depthpass->create();
 		// Depth pres pass pipeline for glTF models
 		pipelines.depthpassTree = new Pipeline(device);
@@ -1941,9 +1795,9 @@ public:
 		pipelines.depthpassTree->setVertexInputState(&vertexInputStateModelInstanced);
 		pipelines.depthpassTree->setCache(pipelineCache);
 		pipelines.depthpassTree->setLayout(depthPass.pipelineLayout);
-		pipelines.depthpassTree->setRenderPass(depthPass.renderPass);
 		pipelines.depthpassTree->addShader(getAssetPath() + "shaders/tree_depthpass.vert.spv");
 		pipelines.depthpassTree->addShader(getAssetPath() + "shaders/tree_depthpass.frag.spv");
+		pipelines.depthpassTree->setpNext(&pipelineRenderingCreateInfoDepthPass);
 		pipelines.depthpassTree->create();
 	}
 
@@ -2080,25 +1934,225 @@ public:
 
 		// CSM
 		if (renderShadows) {
+
+			// A single depth stencil attachment info can be used, but they can also be specified separately.
+			// When both are specified separately, the only requirement is that the image view is identical.			
+			VkRenderingAttachmentInfo depthStencilAttachment{};
+			depthStencilAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+			depthStencilAttachment.imageView = depth.view->handle;
+			depthStencilAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
+			depthStencilAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+			depthStencilAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+			depthStencilAttachment.clearValue.depthStencil = { 1.0f,  0 };
+
+			VkRenderingInfo renderingInfo{};
+			renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+			renderingInfo.renderArea = { 0, 0, (uint32_t)SHADOWMAP_DIM, (uint32_t)SHADOWMAP_DIM };
+			renderingInfo.layerCount = SHADOW_MAP_CASCADE_COUNT;
+			renderingInfo.pDepthAttachment = &depthStencilAttachment;
+			renderingInfo.pStencilAttachment = &depthStencilAttachment;
+			renderingInfo.viewMask = 0b00001111;
+
+			vks::tools::setImageLayout(cb->handle, depth.image->handle, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, { VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, SHADOW_MAP_CASCADE_COUNT });
+
+			vkCmdBeginRendering(cb->handle, &renderingInfo);
 			drawCSM(cb);
+			vkCmdEndRendering(cb->handle);
+
+			vks::tools::setImageLayout(cb->handle, depth.image->handle, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, { VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, SHADOW_MAP_CASCADE_COUNT });
 		}
 
+		// Offscreen
+
+		// New structures are used to define the attachments used in dynamic rendering
+		VkRenderingAttachmentInfo colorAttachment{};
+		colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		colorAttachment.imageView = offscreenPass.refraction.view->handle;
+		colorAttachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachment.clearValue.color = { 0.0f,0.0f,0.0f,0.0f };
+
+		// A single depth stencil attachment info can be used, but they can also be specified separately.
+		// When both are specified separately, the only requirement is that the image view is identical.			
+		VkRenderingAttachmentInfo depthStencilAttachment{};
+		depthStencilAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		depthStencilAttachment.imageView = offscreenPass.depth.view->handle;
+		depthStencilAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
+		depthStencilAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depthStencilAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		depthStencilAttachment.clearValue.depthStencil = { 1.0f,  0 };
+
+		VkRenderingInfo renderingInfo{};
+		renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+		renderingInfo.renderArea = { 0, 0, (uint32_t)offscreenPass.width, (uint32_t)offscreenPass.height };
+		renderingInfo.layerCount = 1;
+		renderingInfo.colorAttachmentCount = 1;
+		renderingInfo.pColorAttachments = &colorAttachment;
+		renderingInfo.pDepthAttachment = &depthStencilAttachment;
+		renderingInfo.pStencilAttachment = &depthStencilAttachment;
+
+		// Begin dynamic rendering
+
+		vks::tools::insertImageMemoryBarrier(
+			cb->handle,
+			offscreenPass.reflection.image->handle,
+			0,
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+		vks::tools::insertImageMemoryBarrier(
+			cb->handle,
+			offscreenPass.refraction.image->handle,
+			0,
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+		vks::tools::insertImageMemoryBarrier(
+			cb->handle,
+			offscreenPass.depth.image->handle,
+			0,
+			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			VkImageSubresourceRange{ VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1 });
+
 		// Refraction
-		cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.refraction.frameBuffer);
+		vkCmdBeginRendering(cb->handle, &renderingInfo);
 		cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
 		cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
 		drawScene(cb, SceneDrawType::sceneDrawTypeRefract);
-		cb->endRenderPass();
+		vkCmdEndRendering(cb->handle);
+
+
+		// New structures are used to define the attachments used in dynamic rendering
+		colorAttachment = {};
+		colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		colorAttachment.imageView = offscreenPass.reflection.view->handle;
+		colorAttachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachment.clearValue.color = { 0.0f,0.0f,0.0f,0.0f };
+
+		// A single depth stencil attachment info can be used, but they can also be specified separately.
+		// When both are specified separately, the only requirement is that the image view is identical.			
+		depthStencilAttachment = {};
+		depthStencilAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		depthStencilAttachment.imageView = offscreenPass.depth.view->handle;
+		depthStencilAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
+		depthStencilAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depthStencilAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		depthStencilAttachment.clearValue.depthStencil = { 1.0f,  0 };
+
+		renderingInfo = {};
+		renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+		renderingInfo.renderArea = { 0, 0, (uint32_t)offscreenPass.width, (uint32_t)offscreenPass.height };
+		renderingInfo.layerCount = 1;
+		renderingInfo.colorAttachmentCount = 1;
+		renderingInfo.pColorAttachments = &colorAttachment;
+		renderingInfo.pDepthAttachment = &depthStencilAttachment;
+		renderingInfo.pStencilAttachment = &depthStencilAttachment;
 
 		// Reflection
-		cb->beginRenderPass(offscreenPass.renderPass, offscreenPass.reflection.frameBuffer);
+		vkCmdBeginRendering(cb->handle, &renderingInfo);
 		cb->setViewport(0.0f, 0.0f, (float)offscreenPass.width, (float)offscreenPass.height, 0.0f, 1.0f);
 		cb->setScissor(0, 0, offscreenPass.width, offscreenPass.height);
 		drawScene(cb, SceneDrawType::sceneDrawTypeReflect);
-		cb->endRenderPass();
+		vkCmdEndRendering(cb->handle);
+
+		vks::tools::setImageLayout(cb->handle, offscreenPass.reflection.image->handle, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+		vks::tools::setImageLayout(cb->handle, offscreenPass.refraction.image->handle, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+
+		//vks::tools::insertImageMemoryBarrier(
+		//	cb->handle,
+		//	offscreenPass.reflection.image->handle,
+		//	0,
+		//	VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		//	VK_IMAGE_LAYOUT_UNDEFINED,
+		//	VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		//	VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		//	VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		//	VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+		//vks::tools::insertImageMemoryBarrier(
+		//	cb->handle,
+		//	offscreenPass.refraction.image->handle,
+		//	0,
+		//	VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		//	VK_IMAGE_LAYOUT_UNDEFINED,
+		//	VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		//	VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		//	VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		//	VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
 
 		// Scene
-		cb->beginRenderPass(renderPass, frameBuffers[currentBuffer]);
+
+		// Transition color and depth images for drawing
+		vks::tools::insertImageMemoryBarrier(
+			cb->handle,
+			swapChain.buffers[swapChain.currentImageIndex].image,
+			0,
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+		vks::tools::insertImageMemoryBarrier(
+			cb->handle,
+			depthStencil.image,
+			0,
+			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			VkImageSubresourceRange{ VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1 });
+
+		// New structures are used to define the attachments used in dynamic rendering
+		colorAttachment = {};
+		colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		colorAttachment.imageView = multisampleTarget.color.view;
+		colorAttachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachment.clearValue.color = { 0.0f,0.0f,0.0f,0.0f };
+		colorAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+		colorAttachment.resolveImageView = swapChain.buffers[swapChain.currentImageIndex].view;
+		colorAttachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+
+		// A single depth stencil attachment info can be used, but they can also be specified separately.
+		// When both are specified separately, the only requirement is that the image view is identical.			
+		depthStencilAttachment = {};
+		depthStencilAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+		depthStencilAttachment.imageView = multisampleTarget.depth.view;
+		depthStencilAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
+		depthStencilAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depthStencilAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		depthStencilAttachment.clearValue.depthStencil = { 1.0f,  0 };
+		depthStencilAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+		depthStencilAttachment.resolveImageView = depthStencil.view;
+		depthStencilAttachment.resolveMode = VK_RESOLVE_MODE_NONE;
+
+		renderingInfo = {};
+		renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+		renderingInfo.renderArea = { 0, 0, width, height };
+		renderingInfo.layerCount = 1;
+		renderingInfo.colorAttachmentCount = 1;
+		renderingInfo.pColorAttachments = &colorAttachment;
+		renderingInfo.pDepthAttachment = &depthStencilAttachment;
+		renderingInfo.pStencilAttachment = &depthStencilAttachment;
+
+		// Begin dynamic rendering
+		vkCmdBeginRendering(cb->handle, &renderingInfo);
+
 		cb->setViewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
 		cb->setScissor(0, 0, width, height);
 		drawScene(cb, SceneDrawType::sceneDrawTypeDisplay);
@@ -2130,7 +2184,40 @@ public:
 			drawUI(cb->handle);
 		}
 
-		cb->endRenderPass();
+		VkImageResolve imageResolve{
+			// mip level 0, layerbase 0, layer count 1
+			{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+			{0, 0, 0},
+			{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+			{0, 0, 0},
+			{ width, height, 1 },
+		};
+
+		//VkImageResolve imageResolve{};
+		//imageResolve.srcSubresource.layerCount = 1;
+		//imageResolve.srcOffset = { 0, 0, 0 };
+		//imageResolve.extent = { 1, 1, 1 };
+		//imageResolve.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		//imageResolve.dstSubresource.layerCount = 1;
+		//imageResolve.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		//imageResolve.dstOffset = { 0, 0, 0 };
+		//vkCmdResolveImage(cb->handle, multisampleTarget.color.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, swapChain.images[swapChain.currentImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, &imageResolve);
+
+		vkCmdEndRendering(cb->handle);
+
+		// Transition color image for presentation
+		vks::tools::insertImageMemoryBarrier(
+			cb->handle,
+			swapChain.buffers[swapChain.currentImageIndex].image,
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			0,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+
+		//cb->endRenderPass();
 
 		cb->end();
 	}
@@ -2221,7 +2308,6 @@ public:
 		ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiSetCond_FirstUseEver);
 		ImGui::Begin("Debugging", nullptr, ImGuiWindowFlags_None);
 		overlay->checkBox("Fix frustum", &fixFrustum);
-		overlay->checkBox("Wireframe", &displayWireFrame);
 		overlay->checkBox("Waterplane", &displayWaterPlane);
 		overlay->checkBox("Display reflection", &debugDisplayReflection);
 		overlay->checkBox("Display refraction", &debugDisplayRefraction);

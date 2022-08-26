@@ -56,7 +56,6 @@
 
 #include "CommandBuffer.hpp"
 #include "CommandPool.hpp"
-#include "RenderPass.hpp"
 
 struct VulkanFrameObjects
 {
@@ -80,6 +79,9 @@ private:
 	// Called if the window is resized and some resources have to be recreatesd
 	void windowResize();
 	void handleMouseMove(int32_t x, int32_t y);
+
+	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
+protected:
 	struct MultisampleTarget {
 		struct {
 			VkImage image;
@@ -92,7 +94,6 @@ private:
 			VkDeviceMemory memory;
 		} depth;
 	} multisampleTarget;
-protected:
 	// Frame counter to display fps
 	uint32_t frameCounter = 0;
 	uint32_t lastFPS = 0;
@@ -127,9 +128,6 @@ protected:
 	VkSubmitInfo submitInfo;
 	CommandPool* commandPool;
 	std::vector<CommandBuffer*> commandBuffers;
-	RenderPass* renderPass;
-	// List of available frame buffers (same as number of swap chain images)
-	std::vector<VkFramebuffer>frameBuffers;
 	// Active frame buffer index
 	uint32_t currentBuffer = 0;
 	// List of shader modules created (stored for cleanup)
@@ -173,7 +171,7 @@ public:
 		bool fullscreen = false;
 		bool vsync = false;
 		bool overlay = false;
-		bool multiSampling = true;
+		bool multiSampling = true; // @todo
 		VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_4_BIT;
 	} settings;
 
@@ -368,10 +366,7 @@ public:
 	virtual void setupDepthStencil();
 	// Create framebuffers for all requested swap chain images
 	// Can be overriden in derived class to setup a custom framebuffer (e.g. for MSAA)
-	virtual void setupFrameBuffer();
-	// Setup a default render pass
-	// Can be overriden in derived class to setup a custom render pass (e.g. for MSAA)
-	virtual void setupRenderPass();
+	virtual void setupImages();
 
 	/** @brief (Virtual) Called after the physical device features have been read, can be used to set features to enable on the device */
 	virtual void getEnabledFeatures();

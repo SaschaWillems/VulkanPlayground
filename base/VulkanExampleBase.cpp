@@ -198,7 +198,6 @@ void VulkanExampleBase::prepare()
 	createCommandBuffers();
 	createSynchronizationPrimitives();
 	setupDepthStencil();
-	setupRenderPass();
 	createPipelineCache();
 	setupFrameBuffer();
 	settings.overlay = settings.overlay && (!benchmark.active);
@@ -210,7 +209,7 @@ void VulkanExampleBase::prepare()
 			loadShader(getAssetPath() + "shaders/base/uioverlay.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT),
 		};
 		UIOverlay.prepareResources();
-		UIOverlay.preparePipeline(pipelineCache, renderPass->handle);
+		UIOverlay.preparePipeline(pipelineCache, swapChain.colorFormat, depthFormat);
 	}
 }
 
@@ -610,10 +609,24 @@ void VulkanExampleBase::updateOverlay()
 	//ImGui::PopStyleVar();
 	ImGui::Render();
 
-	if (UIOverlay.update() || UIOverlay.updated) {
-		buildCommandBuffers();
-		UIOverlay.updated = false;
+	//Check if the overlay's index and vertex buffers needs to be updated (recreated), e.g. because new elements are visible and indices or vertices require additional buffer space
+   //@todo: remove?
+	if (settings.overlay) {
+		if (UIOverlay.bufferUpdateRequired()) {
+			std::cout << "UI buffers need to be recreated\n";
+			// Ensure all command buffers have finished execution, so we don't change vertex and/or index buffers still in use
+			// @todo: wait for fences instead?
+			vkQueueWaitIdle(queue);
+			UIOverlay.allocateBuffers();
+		}
+		// @todo: cap update rate
+		UIOverlay.updateBuffers();
 	}
+
+	//if (UIOverlay.update() || UIOverlay.updated) {
+	//	buildCommandBuffers();
+	//	UIOverlay.updated = false;
+	//}
 
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
 	if (mouseButtons.left) {
@@ -777,11 +790,6 @@ VulkanExampleBase::~VulkanExampleBase()
 	// Clean up Vulkan resources
 	swapChain.cleanup();
 	destroyCommandBuffers();
-	vkDestroyRenderPass(device, renderPass->handle, nullptr);
-	for (uint32_t i = 0; i < frameBuffers.size(); i++)
-	{
-		vkDestroyFramebuffer(device, frameBuffers[i], nullptr);
-	}
 
 	for (auto& shaderModule : shaderModules)
 	{
@@ -947,6 +955,10 @@ bool VulkanExampleBase::initVulkan()
 
 	// Derived examples can override this to set actual features (based on above readings) to enable for logical device creation
 	getEnabledFeatures();
+
+	dynamicRenderingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
+	dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
+	deviceCreatepNextChain = &dynamicRenderingFeatures;
 
 	// Vulkan device creation
 	// This is handled by a separate class that gets a logical device representation
@@ -2072,7 +2084,7 @@ void VulkanExampleBase::setupDepthStencil()
 	VK_CHECK_RESULT(vkCreateImageView(device, &imageViewCI, nullptr, &depthStencil.view));
 }
 
-void VulkanExampleBase::setupFrameBuffer()
+void VulkanExampleBase::setupImages()
 {
 	if (settings.multiSampling) {
 		// Check if device supports requested sample count for color and depth frame buffer
@@ -2160,224 +2172,9 @@ void VulkanExampleBase::setupFrameBuffer()
 		imageViewCI.subresourceRange.layerCount = 1;
 		VK_CHECK_RESULT(vkCreateImageView(device, &imageViewCI, nullptr, &multisampleTarget.depth.view));
 	}
-
-	VkImageView attachments[4];
-
-	if (settings.multiSampling) {
-		attachments[0] = multisampleTarget.color.view;
-		attachments[2] = multisampleTarget.depth.view;
-		attachments[3] = depthStencil.view;
-	}
-	else {
-		attachments[1] = depthStencil.view;
-	}
-
-	VkFramebufferCreateInfo frameBufferCI{};
-	frameBufferCI.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-	frameBufferCI.pNext = NULL;
-	frameBufferCI.renderPass = renderPass->handle;
-	frameBufferCI.attachmentCount = settings.multiSampling ? 4 : 2;
-	frameBufferCI.pAttachments = attachments;
-	frameBufferCI.width = width;
-	frameBufferCI.height = height;
-	frameBufferCI.layers = 1;
-
-	// Create frame buffers for every swap chain image
-	frameBuffers.resize(swapChain.imageCount);
-	for (uint32_t i = 0; i < frameBuffers.size(); i++) {
-		if (settings.multiSampling) {
-			attachments[1] = swapChain.buffers[i].view;
-		}
-		else {
-			attachments[0] = swapChain.buffers[i].view;
-		}
-		VK_CHECK_RESULT(vkCreateFramebuffer(device, &frameBufferCI, nullptr, &frameBuffers[i]));
-	}
 }
-
-void VulkanExampleBase::setupRenderPass()
-{
-	renderPass = new RenderPass(device);
-	renderPass->setDimensions(width, height);
-
-	if (settings.multiSampling) {
-
-		const VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-		const VkAttachmentReference resolveReference = { 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-		const VkAttachmentReference depthReference = { 2, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-		/*
-		typedef struct VkSubpassDescription {
-			VkSubpassDescriptionFlags       flags;
-			VkPipelineBindPoint             pipelineBindPoint;
-			uint32_t                        inputAttachmentCount;
-			const VkAttachmentReference* pInputAttachments;
-			uint32_t                        colorAttachmentCount;
-			const VkAttachmentReference* pColorAttachments;
-			const VkAttachmentReference* pResolveAttachments;
-			const VkAttachmentReference* pDepthStencilAttachment;
-			uint32_t                        preserveAttachmentCount;
-			const uint32_t* pPreserveAttachments;
-		} VkSubpassDescription;
-		*/
-
-		renderPass->addSubpassDescription({
-			0,
-			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			0,
-			nullptr,
-			1,
-			&colorReference,
-			& resolveReference,
-			&depthReference,
-			0,
-			nullptr
-			});
-
-		// Multisampled attachment that we render to
-		renderPass->addAttachmentDescription({
-			0,
-			swapChain.colorFormat,
-			settings.sampleCount,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-			});
-
-		// Color resolve attachment
-		renderPass->addAttachmentDescription({
-			0,
-			swapChain.colorFormat,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-			});
-
-
-		// Multisampled depth attachment we render to
-		renderPass->addAttachmentDescription({
-			0,
-			depthFormat,
-			settings.sampleCount,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-			});
-
-		// Depth resolve attachment
-		renderPass->addAttachmentDescription({
-			0,
-			depthFormat,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-			});
-
-		// Subpass dependencies
-		renderPass->addSubpassDependency({
-			VK_SUBPASS_EXTERNAL,
-			0,
-			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			VK_ACCESS_MEMORY_READ_BIT,
-			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-			});
-		renderPass->addSubpassDependency({
-			0,
-			VK_SUBPASS_EXTERNAL,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			VK_ACCESS_MEMORY_READ_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-			});
-		renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
-		renderPass->setColorClearValue(1, { 0.0f, 0.0f, 0.0f, 0.0f });
-		renderPass->setDepthStencilClearValue(2, 1.0f, 0.0f);
-		renderPass->create();
-	} else {
-		const VkAttachmentReference colorReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-		const VkAttachmentReference depthReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-		renderPass->addSubpassDescription({
-			0,
-			VK_PIPELINE_BIND_POINT_GRAPHICS,
-			0,
-			nullptr,
-			1,
-			&colorReference,
-			nullptr,
-			&depthReference,
-			0,
-			nullptr
-			});
-		// Color attachment
-		renderPass->addAttachmentDescription({
-			0,
-			swapChain.colorFormat,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-			});
-		// Depth attachment
-		renderPass->addAttachmentDescription({
-			0,
-			depthFormat,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR,
-			VK_ATTACHMENT_STORE_OP_STORE,
-			VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-			});
-		// Subpass dependencies
-		renderPass->addSubpassDependency({
-			VK_SUBPASS_EXTERNAL,
-			0,
-			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			VK_ACCESS_MEMORY_READ_BIT,
-			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-			});
-		renderPass->addSubpassDependency({
-			0,
-			VK_SUBPASS_EXTERNAL,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			VK_ACCESS_MEMORY_READ_BIT,
-			VK_DEPENDENCY_BY_REGION_BIT,
-			});
-		renderPass->setColorClearValue(0, { 0.0f, 0.0f, 0.0f, 0.0f });
-		renderPass->setDepthStencilClearValue(1, 1.0f, 0.0f);
-		renderPass->create();
-	}
-}
-
 void VulkanExampleBase::getEnabledFeatures()
 {
-	// Can be overriden in derived class
 }
 
 void VulkanExampleBase::windowResize()
@@ -2401,9 +2198,6 @@ void VulkanExampleBase::windowResize()
 	vkDestroyImage(device, depthStencil.image, nullptr);
 	vkFreeMemory(device, depthStencil.mem, nullptr);
 	setupDepthStencil();	
-	for (uint32_t i = 0; i < frameBuffers.size(); i++) {
-		vkDestroyFramebuffer(device, frameBuffers[i], nullptr);
-	}
 	setupFrameBuffer();
 
 	if ((width > 0.0f) && (height > 0.0f)) {

@@ -75,11 +75,11 @@ void main()
 //		color *= ambient * shadow;
 	}
 
-	if (params.fog == 1) {
+//	if (params.fog == 1) {
 		outFragColor = vec4(applyFog(color.rgb), 1.0);
-	} else {
-		outFragColor = color;
-	}
-
+//	} else {
+//		outFragColor = color;
+//	}
+//
 //	outFragColor = vec4(applyFog( texture(samplerReflection, vec2(projCoord)).rgb), 1.0);
 }
