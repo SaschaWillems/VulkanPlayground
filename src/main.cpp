@@ -14,6 +14,7 @@
 #include <thread>
 #include <mutex>
 #include <math.h>
+#include <filesystem>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -86,9 +87,9 @@ public:
 	int selectedTreeType = 0;
 	int selectedGrassType = 0;
 
-	const std::vector<float> imposterScales = { 0.65f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+	const std::vector<float> imposterScales = { 0.65f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	const std::vector<std::string> treeTypes = {
-		"spruce", "fir", "tropical", "tropical2", "palm", "coconut_palm"
+		"spruce", "fir", "birch", "tropical", "tropical2", "palm", "coconut_palm"
 	};
 	const std::vector<std::string> grassTypes = {
 		"grasspatch", "grasspatch_medium", "grasspatch_large"
@@ -96,15 +97,6 @@ public:
 
 	std::vector<TreeModelInfo> treeModelInfo;
 	std::vector<vkglTF::Model> grassModels;
-
-	const std::vector<std::string> presets = {
-		"default",
-		"flat",
-		"impostors",
-		"grasstest",
-		"extreme"
-	};
-	int32_t presetIndex = 0;
 
 	struct CascadeDebug {
 		bool enabled = false;
@@ -232,6 +224,8 @@ public:
 		VkSampler sampler;
 	} offscreenPass;
 
+	VkSampler terrainSampler = VK_NULL_HANDLE;
+
 	/* CSM */
 
 	float cascadeSplitLambda = 0.95f;
@@ -304,6 +298,13 @@ public:
 		Timing drawBatchCpu;
 		Timing drawBatchUpload;
 	} profiling;
+
+	struct FileList {
+		std::vector<std::string> terrainSets;
+		std::vector<std::string> presets;
+	} fileList;
+	int32_t presetIndex = 0;
+	int32_t terrainSetIndex = 0;
 
 	inline float gold_noise(glm::vec2 xy, float seed) {
 		const float PHI = 1.61803398874989484820459;
@@ -580,6 +581,21 @@ public:
 		}
 	}
 
+	void readFileLists()
+	{
+		fileList.terrainSets.clear();
+		for (const auto& fileName : std::filesystem::directory_iterator(getAssetPath() + "textures/terrainsets")) {
+			fileList.terrainSets.push_back(fileName.path().filename().string());
+		}
+		fileList.presets.clear();
+		for (const auto& fileName : std::filesystem::directory_iterator(getAssetPath() + "presets")) {
+			if (fileName.path().extension() == ".txt") {
+				fileList.presets.push_back(fileName.path().stem().string());
+			}
+		}
+	}
+
+
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
 		title = "Vulkan infinite terrain";
@@ -626,17 +642,13 @@ public:
 		apiVersion = VK_API_VERSION_1_3;
 		enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-		//loadHeightMapSettings("default");
-		loadHeightMapSettings("palms2");
-		//loadHeightMapSettings("palms");
-//		heightMapSettings.loadFromFile(getAssetPath() + "presets/default2.txt");
-		memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
-
 #if defined(_WIN32)
 		//ShowCursor(false);
 #endif
 
 		//numThreads = std::thread::hardware_concurrency();
+
+		readFileLists();
 	}
 
 	void loadHeightMapSettings(std::string name) 
@@ -654,6 +666,13 @@ public:
 				break;
 			}
 		}
+
+		loadSkySphere(heightMapSettings.skySphere);
+		loadTerrainSet(heightMapSettings.terrainSet);
+		memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
+		infiniteTerrain.clear();
+		updateHeightmap();
+		viewChanged();
 	}
 
 	~VulkanExample()
@@ -949,72 +968,6 @@ public:
 		vks::tools::getSupportedDepthFormat(physicalDevice, &depthFormat);
 
 		/*
-			Depth map renderpass
-		*/
-
-		VkAttachmentReference depthReference = { 0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-		//depthPass.renderPass = new RenderPass(device);
-		//depthPass.renderPass->setDimensions(SHADOWMAP_DIM, SHADOWMAP_DIM);
-		//depthPass.renderPass->addSubpassDescription({
-		//	0,
-		//	VK_PIPELINE_BIND_POINT_GRAPHICS,
-		//	0,
-		//	nullptr,
-		//	0,
-		//	nullptr,
-		//	nullptr,
-		//	&depthReference,
-		//	0,
-		//	nullptr
-		//	});
-		//// Depth attachment
-		//depthPass.renderPass->addAttachmentDescription({
-		//	0,
-		//	depthFormat,
-		//	VK_SAMPLE_COUNT_1_BIT,
-		//	VK_ATTACHMENT_LOAD_OP_CLEAR,
-		//	VK_ATTACHMENT_STORE_OP_STORE,
-		//	VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		//	VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		//	VK_IMAGE_LAYOUT_UNDEFINED,
-		//	VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-		//	});
-		//// Subpass dependencies
-		//depthPass.renderPass->addSubpassDependency({
-		//	VK_SUBPASS_EXTERNAL,
-		//	0,
-		//	VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-		//	VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-		//	VK_ACCESS_SHADER_READ_BIT,
-		//	VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-		//	VK_DEPENDENCY_BY_REGION_BIT,
-		//	});
-		//depthPass.renderPass->addSubpassDependency({
-		//	0,
-		//	VK_SUBPASS_EXTERNAL,
-		//	VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-		//	VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-		//	VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-		//	VK_ACCESS_SHADER_READ_BIT,
-		//	VK_DEPENDENCY_BY_REGION_BIT,
-		//	});
-
-		//const uint32_t viewMask = 0b00001111;
-		//const uint32_t correlationMask = 0b00001111;
-
-		//VkRenderPassMultiviewCreateInfo renderPassMultiviewCI{};
-		//renderPassMultiviewCI.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
-		//renderPassMultiviewCI.subpassCount = 1;
-		//renderPassMultiviewCI.pViewMasks = &viewMask;
-		//renderPassMultiviewCI.correlationMaskCount = 1;
-		//renderPassMultiviewCI.pCorrelationMasks = &correlationMask;
-
-		//depthPass.renderPass->setMultiview(renderPassMultiviewCI);
-		//depthPass.renderPass->setDepthStencilClearValue(0, 1.0f, 0);
-		//depthPass.renderPass->create();
-
-		/*
 			Layered depth image and views
 		*/
 		depth.image = new Image(vulkanDevice);
@@ -1179,14 +1132,18 @@ public:
 	
 	void loadTerrainSet(const std::string name)
 	{
-
 		const std::string path = getAssetPath() + "textures/terrainsets/" + name + "/";
 		std::vector<std::string> filenames;
 		for (int i = 0; i < 6; i++) {
 			filenames.push_back(path + std::to_string(i) + ".ktx");
 		}
+		if (textures.terrainArray.image != VK_NULL_HANDLE) {
+			vkQueueWaitIdle(queue);
+			textures.terrainArray.destroy();
+		}
 		textures.terrainArray.loadFromFiles(filenames, VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
-		if (descriptorSets.terrain) {
+		if (descriptorSets.terrain != VK_NULL_HANDLE) {
+			textures.terrainArray.descriptor.sampler = terrainSampler;
 			descriptorSets.terrain->updateDescriptor(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &textures.terrainArray.descriptor);
 		}
 	}
@@ -1215,7 +1172,6 @@ public:
 		//textures.skySphere.loadFromFile(getAssetPath() + "textures/skysphere2.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 		loadSkySphere(heightMapSettings.skySphere);
 		textures.waterNormalMap.loadFromFile(getAssetPath() + "textures/water_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
-		//loadTerrainSet("grid");
 		loadTerrainSet(heightMapSettings.terrainSet);
 
 		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
@@ -1240,8 +1196,8 @@ public:
 			samplerInfo.maxAnisotropy = 4.0f;
 			samplerInfo.anisotropyEnable = VK_TRUE;
 		}
-		VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &textures.terrainArray.sampler));
-		textures.terrainArray.descriptor.sampler = textures.terrainArray.sampler;
+		VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &terrainSampler));
+		textures.terrainArray.descriptor.sampler = terrainSampler;
 	}
 
 	// Generate a terrain quad patch for feeding to the tessellation control shader
@@ -1918,10 +1874,12 @@ public:
 		prepareUniformBuffers();
 		createPipelines();
 		setupDescriptorSet();
-		
+
+		loadHeightMapSettings("default");
+
 		// @todo
-		infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
-		infiniteTerrain.updateVisibleChunks(frustum);
+		//infiniteTerrain.viewerPosition = glm::vec2(camera.position.x, camera.position.z);
+		//infiniteTerrain.updateVisibleChunks(frustum);
 		//updateHeightmap(false);
 
 		prepared = true;
@@ -2181,7 +2139,7 @@ public:
 		}
 
 		if (UIOverlay.visible) {
-			drawUI(cb->handle);
+			UIOverlay.draw(cb->handle, getCurrentFrameIndex());
 		}
 
 		VkImageResolve imageResolve{
@@ -2192,16 +2150,6 @@ public:
 			{0, 0, 0},
 			{ width, height, 1 },
 		};
-
-		//VkImageResolve imageResolve{};
-		//imageResolve.srcSubresource.layerCount = 1;
-		//imageResolve.srcOffset = { 0, 0, 0 };
-		//imageResolve.extent = { 1, 1, 1 };
-		//imageResolve.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		//imageResolve.dstSubresource.layerCount = 1;
-		//imageResolve.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		//imageResolve.dstOffset = { 0, 0, 0 };
-		//vkCmdResolveImage(cb->handle, multisampleTarget.color.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, swapChain.images[swapChain.currentImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, &imageResolve);
 
 		vkCmdEndRendering(cb->handle);
 
@@ -2216,8 +2164,6 @@ public:
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 			VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
-
-		//cb->endRenderPass();
 
 		cb->end();
 	}
@@ -2253,6 +2199,8 @@ public:
 		updateUniformBuffers();
 		updateUniformParams();
 		updateDrawBatches();
+
+		updateOverlay(getCurrentFrameIndex());
 
 		buildCommandBuffer(currentFrame.commandBuffer);
 
@@ -2386,14 +2334,17 @@ public:
 			infiniteTerrain.clear();
 			updateHeightmap();
 		}
-		if (overlay->comboBox("Load preset", &presetIndex, presets)) {
-			heightMapSettings.loadFromFile(getAssetPath() + "presets/" + presets[presetIndex] + ".txt");
+		if (overlay->comboBox("Load preset", &presetIndex, fileList.presets)) {
+			heightMapSettings.loadFromFile(getAssetPath() + "presets/" + fileList.presets[presetIndex] + ".txt");
 			loadSkySphere(heightMapSettings.skySphere);
 			loadTerrainSet(heightMapSettings.terrainSet);
 			memcpy(uniformDataParams.layers, heightMapSettings.textureLayers, sizeof(glm::vec4) * TERRAIN_LAYER_COUNT);
 			infiniteTerrain.clear();
 			updateHeightmap();
 			viewChanged();
+		}
+		if (overlay->comboBox("Terrain set", &terrainSetIndex, fileList.terrainSets)) {
+			loadTerrainSet(fileList.terrainSets[terrainSetIndex]);
 		}
 		ImGui::End();
 

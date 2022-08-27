@@ -51,6 +51,11 @@ namespace vks
 
 	UIOverlay::~UIOverlay()	{ }
 
+	void UIOverlay::setFrameCount(uint32_t frameCount)
+	{
+		frameObjects.resize(frameCount);
+	}
+
 	/** Prepare all vulkan resources required to render the UI overlay */
 	void UIOverlay::prepareResources()
 	{
@@ -276,7 +281,6 @@ namespace vks
 		pipelineCreateInfo.pDynamicState = &dynamicState;
 		pipelineCreateInfo.stageCount = static_cast<uint32_t>(shaders.size());
 		pipelineCreateInfo.pStages = shaders.data();
-		pipelineCreateInfo.subpass = subpass;
 		pipelineCreateInfo.pNext = &pipelineRenderingCreateInfo;
 
 		// Vertex bindings an attributes based on ImGui vertex definition
@@ -347,6 +351,8 @@ namespace vks
 		}
 		*/
 
+		/*
+
 		// Upload data
 		ImDrawVert* vtxDst = (ImDrawVert*)vertexBuffer.mapped;
 		ImDrawIdx* idxDst = (ImDrawIdx*)indexBuffer.mapped;
@@ -363,10 +369,12 @@ namespace vks
 		vertexBuffer.flush();
 		indexBuffer.flush();
 
+		*/
+
 		return updateCmdBuffers;
 	}
 
-	void UIOverlay::draw(const VkCommandBuffer commandBuffer)
+	void UIOverlay::draw(const VkCommandBuffer commandBuffer, uint32_t frameIndex)
 	{
 		// @todo: move to calling function
 		if (!visible) {
@@ -396,8 +404,8 @@ namespace vks
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstBlock), &pushConstBlock);
 
 		VkDeviceSize offsets[1] = { 0 };
-		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer.buffer, offsets);
-		vkCmdBindIndexBuffer(commandBuffer, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &frameObjects[frameIndex].vertexBuffer.buffer, offsets);
+		vkCmdBindIndexBuffer(commandBuffer, frameObjects[frameIndex].indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
 
 		for (int32_t i = 0; i < imDrawData->CmdListsCount; i++)
 		{
@@ -427,8 +435,10 @@ namespace vks
 	void UIOverlay::freeResources()
 	{
 		ImGui::DestroyContext();
-		vertexBuffer.destroy();
-		indexBuffer.destroy();
+		for (auto& frame : frameObjects) {
+			frame.vertexBuffer.destroy();
+			frame.indexBuffer.destroy();
+		}
 		vkDestroyImageView(device->logicalDevice, fontView, nullptr);
 		vkDestroyImage(device->logicalDevice, fontImage, nullptr);
 		vkFreeMemory(device->logicalDevice, fontMemory, nullptr);
@@ -533,7 +543,7 @@ namespace vks
 		va_end(args);
 	}
 
-	bool UIOverlay::bufferUpdateRequired()
+	bool UIOverlay::bufferUpdateRequired(uint32_t frameIndex)
 	{
 		ImDrawData* imDrawData = ImGui::GetDrawData();
 		if (!imDrawData) { 
@@ -549,14 +559,14 @@ namespace vks
 		}
 
 		// We only check if the buffers are too small, so we don't resize if all vertices and indices fit in the already allocated buffer space
-		if ((vertexCount < imDrawData->TotalVtxCount) || (indexCount < imDrawData->TotalIdxCount)) {
+		if ((frameObjects[frameIndex].vertexCount < imDrawData->TotalVtxCount) || (frameObjects[frameIndex].indexCount < imDrawData->TotalIdxCount)) {
 			return true;
 		}
 
 		return false;
 	}
 
-	void UIOverlay::allocateBuffers()
+	void UIOverlay::allocateBuffers(uint32_t frameIndex)
 	{
 		ImDrawData* imDrawData = ImGui::GetDrawData();
 		if (!imDrawData) {
@@ -565,26 +575,26 @@ namespace vks
 
 		// Vertex buffer
 		VkDeviceSize vertexBufferSize = imDrawData->TotalVtxCount * sizeof(ImDrawVert);
-		if ((vertexBuffer.buffer == VK_NULL_HANDLE) || (imDrawData->TotalVtxCount > vertexCount)) {
-			vertexBuffer.unmap();
-			vertexBuffer.destroy();
-			VK_CHECK_RESULT(device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertexBuffer, vertexBufferSize));
-			vertexCount = imDrawData->TotalVtxCount;
-			vertexBuffer.map();
+		if ((frameObjects[frameIndex].vertexBuffer.buffer == VK_NULL_HANDLE) || (imDrawData->TotalVtxCount > frameObjects[frameIndex].vertexCount)) {
+			frameObjects[frameIndex].vertexBuffer.unmap();
+			frameObjects[frameIndex].vertexBuffer.destroy();
+			VK_CHECK_RESULT(device->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &frameObjects[frameIndex].vertexBuffer, vertexBufferSize));
+			frameObjects[frameIndex].vertexCount = imDrawData->TotalVtxCount;
+			frameObjects[frameIndex].vertexBuffer.map();
 		}
 
 		// Index buffer
 		VkDeviceSize indexBufferSize = imDrawData->TotalIdxCount * sizeof(ImDrawIdx);
-		if ((indexBuffer.buffer == VK_NULL_HANDLE) || (imDrawData->TotalIdxCount > indexCount)) {
-			indexBuffer.unmap();
-			indexBuffer.destroy();
-			VK_CHECK_RESULT(device->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &indexBuffer, indexBufferSize));
-			indexCount = imDrawData->TotalIdxCount;
-			indexBuffer.map();
+		if ((frameObjects[frameIndex].indexBuffer.buffer == VK_NULL_HANDLE) || (imDrawData->TotalIdxCount > frameObjects[frameIndex].indexCount)) {
+			frameObjects[frameIndex].indexBuffer.unmap();
+			frameObjects[frameIndex].indexBuffer.destroy();
+			VK_CHECK_RESULT(device->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &frameObjects[frameIndex].indexBuffer, indexBufferSize));
+			frameObjects[frameIndex].indexCount = imDrawData->TotalIdxCount;
+			frameObjects[frameIndex].indexBuffer.map();
 		}
 	}
 
-	void UIOverlay::updateBuffers()
+	void UIOverlay::updateBuffers(uint32_t frameIndex)
 	{
 		ImDrawData* imDrawData = ImGui::GetDrawData();
 		if (!imDrawData) { 
@@ -593,8 +603,8 @@ namespace vks
 
 		// Upload current frame data to vertex and index buffer
 		if (imDrawData->CmdListsCount > 0) {
-			ImDrawVert* vtxDst = (ImDrawVert*)vertexBuffer.mapped;
-			ImDrawIdx* idxDst = (ImDrawIdx*)indexBuffer.mapped;
+			ImDrawVert* vtxDst = (ImDrawVert*)frameObjects[frameIndex].vertexBuffer.mapped;
+			ImDrawIdx* idxDst = (ImDrawIdx*)frameObjects[frameIndex].indexBuffer.mapped;
 
 			for (int n = 0; n < imDrawData->CmdListsCount; n++) {
 				const ImDrawList* cmd_list = imDrawData->CmdLists[n];
@@ -605,19 +615,14 @@ namespace vks
 			}
 
 			// Flush to make buffer writes visible to GPU
-			vertexBuffer.flush();
-			indexBuffer.flush();
+			frameObjects[frameIndex].vertexBuffer.flush();
+			frameObjects[frameIndex].indexBuffer.flush();
 		}
 	}
 
 	void UIOverlay::setSampleCount(VkSampleCountFlagBits sampleCount)
 	{
 		rasterizationSamples = sampleCount;
-	}
-
-	void UIOverlay::setSubpass(uint32_t subpass)
-	{
-		this->subpass = subpass;
 	}
 
 }

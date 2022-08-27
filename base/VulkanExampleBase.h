@@ -404,7 +404,7 @@ public:
 	// Render one frame of a render loop on platforms that sync rendering
 	void renderFrame();
 
-	void updateOverlay();
+	void updateOverlay(uint32_t frameIndex);
 	void drawUI(const VkCommandBuffer commandBuffer);
 
 	void nextFrame();

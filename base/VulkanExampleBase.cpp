@@ -199,11 +199,12 @@ void VulkanExampleBase::prepare()
 	createSynchronizationPrimitives();
 	setupDepthStencil();
 	createPipelineCache();
-	setupFrameBuffer();
+	setupImages();
 	settings.overlay = settings.overlay && (!benchmark.active);
 	if (settings.overlay) {
 		UIOverlay.device = vulkanDevice;
 		UIOverlay.queue = queue;
+		UIOverlay.setFrameCount(getFrameCount());
 		UIOverlay.shaders = {
 			loadShader(getAssetPath() + "shaders/base/uioverlay.vert.spv", VK_SHADER_STAGE_VERTEX_BIT),
 			loadShader(getAssetPath() + "shaders/base/uioverlay.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT),
@@ -275,7 +276,7 @@ void VulkanExampleBase::renderFrame()
 		lastTimestamp = tEnd;
 	}
 	// TODO: Cap UI overlay update rates
-	updateOverlay();
+	//updateOverlay();
 }
 
 void VulkanExampleBase::renderLoop()
@@ -567,7 +568,7 @@ void VulkanExampleBase::renderLoop()
 	}
 }
 
-void VulkanExampleBase::updateOverlay()
+void VulkanExampleBase::updateOverlay(uint32_t frameIndex)
 {
 	if (!settings.overlay)
 		return;
@@ -612,15 +613,15 @@ void VulkanExampleBase::updateOverlay()
 	//Check if the overlay's index and vertex buffers needs to be updated (recreated), e.g. because new elements are visible and indices or vertices require additional buffer space
    //@todo: remove?
 	if (settings.overlay) {
-		if (UIOverlay.bufferUpdateRequired()) {
+		if (UIOverlay.bufferUpdateRequired(frameIndex)) {
 			std::cout << "UI buffers need to be recreated\n";
 			// Ensure all command buffers have finished execution, so we don't change vertex and/or index buffers still in use
 			// @todo: wait for fences instead?
 			vkQueueWaitIdle(queue);
-			UIOverlay.allocateBuffers();
+			UIOverlay.allocateBuffers(frameIndex);
 		}
 		// @todo: cap update rate
-		UIOverlay.updateBuffers();
+		UIOverlay.updateBuffers(frameIndex);
 	}
 
 	//if (UIOverlay.update() || UIOverlay.updated) {
@@ -637,14 +638,14 @@ void VulkanExampleBase::updateOverlay()
 
 void VulkanExampleBase::drawUI(const VkCommandBuffer commandBuffer)
 {
-	if (settings.overlay) {
-		const VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
-		const VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
-		vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+	//if (settings.overlay) {
+	//	const VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
+	//	const VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
+	//	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+	//	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-		UIOverlay.draw(commandBuffer);
-	}
+	//	UIOverlay.draw(commandBuffer);
+	//}
 }
 
 void VulkanExampleBase::prepareFrame()
@@ -2198,7 +2199,7 @@ void VulkanExampleBase::windowResize()
 	vkDestroyImage(device, depthStencil.image, nullptr);
 	vkFreeMemory(device, depthStencil.mem, nullptr);
 	setupDepthStencil();	
-	setupFrameBuffer();
+	setupImages();
 
 	if ((width > 0.0f) && (height > 0.0f)) {
 		if (settings.overlay) {
@@ -2400,7 +2401,7 @@ void VulkanExampleBase::nextFrame()
 		//}
 	}
 	// TODO: Cap UI overlay update rates
-	updateOverlay();
+	//updateOverlay();
 
 	if (viewUpdated)
 	{

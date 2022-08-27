@@ -37,13 +37,14 @@ namespace vks
 		VkQueue queue;
 
 		VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-		uint32_t subpass = 0;
 
-		// @todo: make buffers per-frame!
-		vks::Buffer vertexBuffer;
-		vks::Buffer indexBuffer;
-		int32_t vertexCount = 0;
-		int32_t indexCount = 0;
+		struct FrameObjects {
+			vks::Buffer vertexBuffer;
+			vks::Buffer indexBuffer;
+			int32_t vertexCount = 0;
+			int32_t indexCount = 0;
+		};
+		std::vector<FrameObjects> frameObjects;
 
 		std::vector<VkPipelineShaderStageCreateInfo> shaders;
 
@@ -70,11 +71,13 @@ namespace vks
 		UIOverlay();
 		~UIOverlay();
 
+		void setFrameCount(uint32_t frameCount);
+
 		void preparePipeline(const VkPipelineCache pipelineCache, VkFormat colorFormat, VkFormat depthFormat);
 		void prepareResources();
 
 		bool update();
-		void draw(const VkCommandBuffer commandBuffer);
+		void draw(const VkCommandBuffer commandBuffer, uint32_t frameIndex);
 		void resize(uint32_t width, uint32_t height);
 
 		void freeResources();
@@ -94,14 +97,13 @@ namespace vks
 		// @todo: for new sync
 
 		// Checks if the vertex and/or index buffers need to be recreated
-		bool bufferUpdateRequired();
+		bool bufferUpdateRequired(uint32_t frameIndex);
 		// (Re)allocate vertex and index buffers
-		void allocateBuffers();
+		void allocateBuffers(uint32_t frameIndex);
 		// Updates the vertex and index buffers with ImGui's current frame data
-		void updateBuffers();
+		void updateBuffers(uint32_t frameIndex);
 
 		// @todo
 		void setSampleCount(VkSampleCountFlagBits sampleCount);
-		void setSubpass(uint32_t subpass);
 	};
 }
